@@ -7,3 +7,4 @@ backend/cloudsentinel.db
 .env
 frontend/node_modules/
 frontend/dist/
+frontend/test-results/
