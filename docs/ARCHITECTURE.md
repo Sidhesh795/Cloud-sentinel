@@ -8,7 +8,7 @@ Phase 1 inspection found an empty workspace at:
 C:\Users\Nihal\Desktop\AZTMM
 ```
 
-Phase 2 added the backend and database foundation. Phase 3 added telemetry ingestion, dynamic posture/tag evaluation, Isolation Forest behavioral anomaly detection, and transparent risk scoring. Phase 4 added the Adaptive Zero Trust policy engine, gateway orchestration, access decision persistence, audit events, and resource-level access APIs. Phase 5 added the React/Vite/Tailwind dashboard that displays backend-authored risk, posture, access, and audit data. Phase 6 added a deterministic account-compromise simulation, reset/status APIs, staged frontend demo flow, containment summary, and blast-radius visualization.
+Phase 2 added the backend and database foundation. Phase 3 added telemetry ingestion, dynamic posture/tag evaluation, Isolation Forest behavioral anomaly detection, and transparent risk scoring. Phase 4 added the Adaptive Zero Trust policy engine, gateway orchestration, access decision persistence, audit events, and resource-level access APIs. Phase 5 added the React/Vite/Tailwind dashboard that displays backend-authored risk, posture, access, and audit data. Phase 6 added a deterministic account-compromise simulation, reset/status APIs, staged frontend demo flow, containment summary, and blast-radius visualization. V1.1 adds the real-world control-plane foundation: organization context, admin user lifecycle APIs, device registration/heartbeat/posture ingestion, and optional MongoDB Atlas persistence.
 
 ## Target Project Layout
 
@@ -19,8 +19,12 @@ cloudsentinel/
   backend/
     main.py
     database.py
+    config.py
     models.py
     schemas.py
+    db/
+      mongodb.py
+      repositories/
     auth/
       auth.py
     security/
@@ -92,6 +96,9 @@ Implemented routers:
 - `api/applications.py`: application inventory
 - `api/events.py`: security timeline
 - `api/health.py`: service health
+- `api/organization.py`: current tenant/organization context
+- `api/admin.py`: organization-scoped user management
+- `api/devices.py`: device registration, heartbeat, posture ingestion, inventory
 - `api/telemetry.py`: telemetry ingestion and recent telemetry retrieval
 - `api/risk.py`: dynamic posture, anomaly, tag, and risk assessment
 - `api/access.py`: authenticated access checks and per-user access matrix
@@ -99,8 +106,11 @@ Implemented routers:
 
 ### Database
 
-SQLite is accessed through SQLAlchemy. The implemented tables are:
+SQLite is accessed through SQLAlchemy and remains the default demo/fallback data store. MongoDB Atlas is optional and explicitly enabled with `DATA_STORE=mongodb`.
 
+The implemented SQLite tables are:
+
+- `organizations`
 - `users`
 - `devices`
 - `applications`
@@ -113,9 +123,21 @@ SQLite is accessed through SQLAlchemy. The implemented tables are:
 
 Seed data includes:
 
+- Organization: `CloudSentinel Demo`
 - Users: `admin01`, `developer01`, `employee01`, `analyst01`
 - Applications: Email, HR Portal, Cloud Storage, Customer Database, Admin Console, Analytics Service
 - Clouds: AWS, Azure, GCP
+
+MongoDB collections introduced in V1.1:
+
+- `organizations`
+- `users`
+- `devices`
+- `applications`
+- `telemetry`
+- `security_events`
+
+MongoDB writes use PyMongo repositories under `backend/db/repositories/`. If MongoDB is unavailable, the FastAPI process remains available and the SQLite demo continues to work.
 
 ### Security Modules
 
@@ -184,8 +206,15 @@ The implemented API surface is:
 
 ```text
 GET /api/health
+GET /api/health/mongodb
 POST /api/auth/login
 GET /api/auth/me
+GET /api/organization
+POST /api/admin/users
+GET /api/admin/users
+GET /api/admin/users/{user_id}
+PATCH /api/admin/users/{user_id}
+DELETE /api/admin/users/{user_id}
 GET /api/users
 GET /api/users/{user_id}
 GET /api/users/{user_id}/posture
@@ -197,6 +226,10 @@ GET /api/applications/{application_id}
 GET /api/events
 GET /api/users/{user_id}/events
 POST /api/telemetry
+GET /api/devices
+POST /api/devices/register
+POST /api/devices/{device_id}/heartbeat
+POST /api/devices/{device_id}/posture
 POST /api/access/check
 POST /api/simulation/attack
 POST /api/simulation/reset
@@ -229,6 +262,8 @@ Implemented pages:
 
 - `Dashboard`: overview cards, user risk monitor, access summary, live events, risk trend
 - `Users`: user list and risk ranking
+- `Organization`: tenant context and data layer health
+- `Devices`: registered endpoint inventory, heartbeat action, posture submission
 - `UserProfile`: selected user's posture, behavior, AI assessment, access matrix
 - `Resources`: multi-cloud resource inventory and sensitivity
 - `Incidents`: active attack simulation and containment state

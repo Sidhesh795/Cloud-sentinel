@@ -53,6 +53,7 @@ def get_user_risk(user_id: int, db: Session = Depends(get_db)) -> RiskAssessment
 
     db.add(
         models.RiskScore(
+            organization_id=user.organization_id,
             user_id=user.id,
             risk_score=risk.risk_score,
             risk_level=risk.risk_level,

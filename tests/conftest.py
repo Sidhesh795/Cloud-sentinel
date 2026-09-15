@@ -25,6 +25,7 @@ def client():
     db = TestingSessionLocal()
     try:
         user = models.User(
+            organization_id=None,
             username="developer01",
             password_hash=hash_password("CloudDemo123!"),
             display_name="Nina Patel",
@@ -35,7 +36,17 @@ def client():
         )
         db.add(user)
         db.flush()
+        organization = models.Organization(
+            name="CloudSentinel Demo",
+            slug="cloudsentinel-demo",
+            status="ACTIVE",
+            environment="DEMO",
+        )
+        db.add(organization)
+        db.flush()
+        user.organization_id = organization.id
         device = models.Device(
+            organization_id=organization.id,
             device_id="DEV-DEV-001",
             user_id=user.id,
             os="Windows",

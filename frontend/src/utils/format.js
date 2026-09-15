@@ -38,4 +38,15 @@ export const compactDate = (value) => {
   }).format(new Date(value));
 };
 
+export const formatRelativeTime = (value) => {
+  if (!value) return "No timestamp";
+  const diffSeconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  if (diffSeconds < 60) return `${diffSeconds} sec ago`;
+  const diffMinutes = Math.round(diffSeconds / 60);
+  if (diffMinutes < 60) return `${diffMinutes} min ago`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} hr ago`;
+  return `${Math.round(diffHours / 24)} days ago`;
+};
+
 export const titleCase = (value) => String(value || "").replaceAll("_", " ");

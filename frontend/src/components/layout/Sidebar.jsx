@@ -1,8 +1,10 @@
-import { Activity, ClipboardList, Cloud, LayoutDashboard, ShieldAlert, Users, Workflow } from "lucide-react";
+import { Activity, Building2, ClipboardList, Cloud, Laptop, LayoutDashboard, ShieldAlert, Users, Workflow } from "lucide-react";
 
 const items = [
   ["Overview", LayoutDashboard],
+  ["Organization", Building2],
   ["Users", Users],
+  ["Devices", Laptop],
   ["Security Posture", ShieldAlert],
   ["How It Works", Workflow],
   ["Resources", Cloud],

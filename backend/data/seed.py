@@ -91,26 +91,53 @@ BASELINE_TAGS = [
 ]
 
 
-def upsert_user(db, user_data: dict) -> models.User:
+def upsert_organization(db) -> models.Organization:
+    now = datetime.now(timezone.utc)
+    organization = db.query(models.Organization).filter_by(slug="cloudsentinel-demo").first()
+    if organization is None:
+        organization = models.Organization(
+            name="CloudSentinel Demo",
+            slug="cloudsentinel-demo",
+            status="ACTIVE",
+            environment="DEMO",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(organization)
+        db.flush()
+    else:
+        organization.name = "CloudSentinel Demo"
+        organization.status = "ACTIVE"
+        organization.environment = "DEMO"
+        organization.updated_at = now
+    return organization
+
+
+def upsert_user(db, organization: models.Organization, user_data: dict) -> models.User:
     user = db.query(models.User).filter_by(username=user_data["username"]).first()
     if user is None:
         user = models.User(
             username=user_data["username"],
+            organization_id=organization.id,
             password_hash=hash_password(DEMO_PASSWORD),
             display_name=user_data["display_name"],
             role=user_data["role"],
             email=user_data["email"],
             device_id=user_data["device_id"],
+            status="ACTIVE",
             is_active=True,
         )
         db.add(user)
         db.flush()
     else:
         user.display_name = user_data["display_name"]
+        user.organization_id = organization.id
         user.role = user_data["role"]
         user.email = user_data["email"]
         user.device_id = user_data["device_id"]
+        user.status = "ACTIVE"
         user.is_active = True
+        user.updated_at = datetime.now(timezone.utc)
     return user
 
 
@@ -120,7 +147,17 @@ def upsert_device(db, user: models.User) -> models.Device:
     if device is None:
         device = models.Device(
             device_id=user.device_id,
+            organization_id=user.organization_id,
             user_id=user.id,
+            device_name=f"{user.display_name}'s Laptop",
+            hostname=f"{user.username}-win11",
+            platform="Windows",
+            platform_version="Windows 11 Enterprise 23H2",
+            agent_version="0.1.0",
+            device_fingerprint=f"demo-{user.username}-{user.device_id}",
+            status="ONLINE",
+            posture_status="HEALTHY",
+            registered_at=now,
             os="Windows",
             os_version="Windows 11 Enterprise 23H2",
             trusted_device=True,
@@ -133,6 +170,16 @@ def upsert_device(db, user: models.User) -> models.Device:
         db.flush()
     else:
         device.user_id = user.id
+        device.organization_id = user.organization_id
+        device.device_name = f"{user.display_name}'s Laptop"
+        device.hostname = f"{user.username}-win11"
+        device.platform = "Windows"
+        device.platform_version = "Windows 11 Enterprise 23H2"
+        device.agent_version = "0.1.0"
+        device.device_fingerprint = f"demo-{user.username}-{user.device_id}"
+        device.status = "ONLINE"
+        device.posture_status = "HEALTHY"
+        device.registered_at = device.registered_at or now
         device.os = "Windows"
         device.os_version = "Windows 11 Enterprise 23H2"
         device.trusted_device = True
@@ -154,6 +201,7 @@ def upsert_security_tags(db, user: models.User, device: models.Device) -> None:
             db.add(
                 models.SecurityTag(
                     user_id=user.id,
+                    organization_id=user.organization_id,
                     device_id=device.id,
                     tag=tag_name,
                     severity=severity,
@@ -185,7 +233,17 @@ def upsert_baseline_telemetry(db, user: models.User, device: models.Device) -> N
     }
     if latest and all(getattr(latest, key) == value for key, value in normal.items()):
         return
-    db.add(models.Telemetry(user_id=user.id, device_id=device.id, **normal))
+        db.add(
+            models.Telemetry(
+                user_id=user.id,
+                organization_id=user.organization_id,
+                device_id=device.id,
+                source="SIMULATION",
+                event_type="APPLICATION_ACTIVITY",
+                metadata_json={"environment": "DEMO"},
+                **normal,
+            )
+        )
 
 
 def reset_simulation_state(db, user: models.User) -> None:
@@ -216,13 +274,26 @@ def seed() -> None:
     init_db()
     db = SessionLocal()
     try:
+        organization = upsert_organization(db)
         for user_data in USERS:
-            user = upsert_user(db, user_data)
+            user = upsert_user(db, organization, user_data)
             device = upsert_device(db, user)
             upsert_security_tags(db, user, device)
             upsert_baseline_telemetry(db, user, device)
             reset_simulation_state(db, user)
         upsert_applications(db)
+        for application in db.query(models.Application).all():
+            application.organization_id = organization.id
+        for table in [
+            models.SecurityEvent,
+            models.Telemetry,
+            models.RiskScore,
+            models.AccessRequest,
+            models.SecurityTag,
+        ]:
+            for record in db.query(table).filter(table.organization_id.is_(None)).all():
+                user = db.query(models.User).filter(models.User.id == record.user_id).first() if getattr(record, "user_id", None) else None
+                record.organization_id = user.organization_id if user else organization.id
         db.commit()
     finally:
         db.close()

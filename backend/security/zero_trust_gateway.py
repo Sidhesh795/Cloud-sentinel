@@ -70,6 +70,7 @@ def assess_current_context(db: Session, user_id: int) -> tuple[models.User, mode
 
     db.add(
         models.RiskScore(
+            organization_id=user.organization_id,
             user_id=user.id,
             risk_score=risk.risk_score,
             risk_level=risk.risk_level,
@@ -156,6 +157,7 @@ def _record_access_decision(
 ) -> None:
     db.add(
         models.AccessRequest(
+            organization_id=user.organization_id,
             user_id=user.id,
             application_id=application.id,
             action=action,
@@ -166,9 +168,11 @@ def _record_access_decision(
     )
     db.add(
         models.SecurityEvent(
+            organization_id=user.organization_id,
             user_id=user.id,
             event_type=_event_type_for(policy.decision),
             severity=_severity_for(policy.decision),
+            source="CONTROL_PLANE",
             description=f"{policy.decision} for {user.username} accessing {application.name}",
             metadata_json={
                 "application_id": application.id,

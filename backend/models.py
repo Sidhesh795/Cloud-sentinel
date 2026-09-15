@@ -14,15 +14,21 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     device_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="ACTIVE", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    organization: Mapped["Organization | None"] = relationship(back_populates="users")
     devices: Mapped[list["Device"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     security_events: Mapped[list["SecurityEvent"]] = relationship(back_populates="user")
     telemetry: Mapped[list["Telemetry"]] = relationship(back_populates="user")
@@ -31,12 +37,39 @@ class User(Base):
     access_requests: Mapped[list["AccessRequest"]] = relationship(back_populates="user")
 
 
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    slug: Mapped[str] = mapped_column(String(80), unique=True, index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="ACTIVE", nullable=False)
+    environment: Mapped[str] = mapped_column(String(24), default="DEMO", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    users: Mapped[list["User"]] = relationship(back_populates="organization")
+    devices: Mapped[list["Device"]] = relationship(back_populates="organization")
+
+
 class Device(Base):
     __tablename__ = "devices"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
     device_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    device_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    hostname: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    platform: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    platform_version: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    agent_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    device_fingerprint: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="ONLINE", nullable=False)
+    posture_status: Mapped[str] = mapped_column(String(24), default="HEALTHY", nullable=False)
+    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    ip_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    location_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     os: Mapped[str] = mapped_column(String(64), nullable=False)
     os_version: Mapped[str] = mapped_column(String(64), nullable=False)
     trusted_device: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -46,6 +79,7 @@ class Device(Base):
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
+    organization: Mapped[Organization | None] = relationship(back_populates="devices")
     user: Mapped[User] = relationship(back_populates="devices")
     security_events: Mapped[list["SecurityEvent"]] = relationship(back_populates="device")
     telemetry: Mapped[list["Telemetry"]] = relationship(back_populates="device")
@@ -56,6 +90,7 @@ class Application(Base):
     __tablename__ = "applications"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     cloud_provider: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
@@ -71,10 +106,12 @@ class SecurityEvent(Base):
     __tablename__ = "security_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"), nullable=True)
     event_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
     severity: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), default="SYSTEM", nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True, nullable=False)
@@ -87,6 +124,7 @@ class Telemetry(Base):
     __tablename__ = "telemetry"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"), nullable=True)
     requests_per_minute: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -96,6 +134,9 @@ class Telemetry(Base):
     access_frequency: Mapped[int] = mapped_column(Integer, nullable=False)
     login_hour: Mapped[int] = mapped_column(Integer, nullable=False)
     location: Mapped[str] = mapped_column(String(120), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(80), default="APPLICATION_ACTIVITY", nullable=False)
+    source: Mapped[str] = mapped_column(String(32), default="SIMULATION", nullable=False)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True, nullable=False)
 
     user: Mapped[User] = relationship(back_populates="telemetry")
@@ -106,6 +147,7 @@ class RiskScore(Base):
     __tablename__ = "risk_scores"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     risk_score: Mapped[int] = mapped_column(Integer, nullable=False)
     risk_level: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -123,6 +165,7 @@ class AccessRequest(Base):
     __tablename__ = "access_requests"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     application_id: Mapped[int] = mapped_column(ForeignKey("applications.id"), nullable=False)
     action: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -139,6 +182,7 @@ class SecurityTag(Base):
     __tablename__ = "security_tags"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"), nullable=True)
     tag: Mapped[str] = mapped_column(String(80), index=True, nullable=False)

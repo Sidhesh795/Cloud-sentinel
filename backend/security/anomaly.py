@@ -66,7 +66,7 @@ def save_model(path: Path = MODEL_PATH) -> Path:
     with path.open("wb") as model_file:
         pickle.dump(model, model_file)
     return path
-
+ 
 
 def load_model():
     if IsolationForest is None or not MODEL_PATH.exists():

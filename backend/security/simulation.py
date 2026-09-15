@@ -65,7 +65,15 @@ def _latest_risk(db: Session, user_id: int) -> models.RiskScore | None:
 
 
 def _add_telemetry(db: Session, user: models.User, device: models.Device, payload: dict) -> models.Telemetry:
-    telemetry = models.Telemetry(user_id=user.id, device_id=device.id, **payload)
+    telemetry = models.Telemetry(
+        organization_id=user.organization_id,
+        user_id=user.id,
+        device_id=device.id,
+        source="SIMULATION",
+        event_type="APPLICATION_ACTIVITY",
+        metadata_json={"simulation": True},
+        **payload,
+    )
     db.add(telemetry)
     db.flush()
     return telemetry
@@ -75,8 +83,10 @@ def _event(db: Session, user: models.User, event_type: str, severity: str, descr
     db.add(
         models.SecurityEvent(
             user_id=user.id,
+            organization_id=user.organization_id,
             event_type=event_type,
             severity=severity,
+            source="SIMULATION",
             description=description,
             metadata_json=metadata or {},
         )

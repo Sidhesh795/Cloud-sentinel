@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from datetime import datetime, timezone
 
 from backend.auth.auth import authenticate_user, create_access_token, get_current_user
 from backend.database import get_db
@@ -19,6 +20,10 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
             detail="Invalid username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    now = datetime.now(timezone.utc)
+    user.last_login = now
+    user.last_seen = now
+    db.commit()
     return LoginResponse(
         access_token=create_access_token(user.username),
         user=UserSummary.model_validate(user),

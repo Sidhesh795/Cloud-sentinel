@@ -8,3 +8,5 @@ backend/cloudsentinel.db
 frontend/node_modules/
 frontend/dist/
 frontend/test-results/
+*.log
+

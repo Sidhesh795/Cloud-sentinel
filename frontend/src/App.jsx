@@ -6,8 +6,10 @@ import { useSimulation } from "./hooks/useSimulation.js";
 import { Api, getToken, setToken } from "./services/api.js";
 import AuditLogs from "./pages/AuditLogs.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
+import Devices from "./pages/Devices.jsx";
 import Incidents from "./pages/Incidents.jsx";
 import Login from "./pages/Login.jsx";
+import Organization from "./pages/Organization.jsx";
 import Resources from "./pages/Resources.jsx";
 import SystemWorkflow from "./pages/SystemWorkflow.jsx";
 import UserProfile from "./pages/UserProfile.jsx";
@@ -21,16 +23,20 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [decision, setDecision] = useState(null);
+  const token = getToken();
 
   const loadAll = useCallback(async (preferredUserId, options = {}) => {
     if (!options.silent) setLoading(true);
     setError("");
     try {
-      const [me, users, applications, events] = await Promise.all([
+      const [me, users, applications, events, organization, devices, mongoHealth] = await Promise.all([
         Api.me(),
         Api.users(),
         Api.applications(),
-        Api.events()
+        Api.events(),
+        Api.organization().catch(() => null),
+        Api.devices().catch(() => []),
+        Api.mongoHealth().catch(() => null)
       ]);
       const targetId = preferredUserId || selectedUserId || me.id || users[0]?.id;
       const canUseSimulation = targetId === me.id;
@@ -57,6 +63,9 @@ export default function App() {
       setData({
         users,
         applications,
+        organization,
+        devices,
+        mongoHealth,
         events,
         userEvents,
         selected,
@@ -71,7 +80,7 @@ export default function App() {
       });
     } catch (err) {
       setError(err?.response?.data?.detail || "Unable to load CloudSentinel data");
-      if (err?.response?.status === 401) {
+      if (err?.response?.status === 401 || err?.response?.status === 403) {
         setToken(null);
         setCurrentUser(null);
       }
@@ -83,12 +92,21 @@ export default function App() {
   const simulation = useSimulation({ selectedUserId, refreshData: loadAll });
 
   useEffect(() => {
-    if (!getToken()) {
+    console.debug("[App] startup", { token, currentUser });
+    if (!token) {
       setLoading(false);
       return;
     }
     loadAll();
   }, []);
+
+  useEffect(() => {
+    if (!token || !currentUser) return undefined;
+    const timer = window.setInterval(() => {
+      loadAll(selectedUserId, { silent: true });
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [token, currentUser, selectedUserId, loadAll]);
 
   async function handleLogin(username, password) {
     const result = await Api.login(username, password);
@@ -113,10 +131,44 @@ export default function App() {
     setDecision(result);
   }
 
+  async function handleCreateUser(payload) {
+    await Api.createUser(payload);
+    await loadAll(selectedUserId, { silent: true });
+  }
+
+  async function handleUpdateUser(id, payload) {
+    await Api.updateUser(id, payload);
+    await loadAll(id, { silent: true });
+  }
+
+  async function handleDisableUser(id) {
+    await Api.disableUser(id);
+    await loadAll(selectedUserId, { silent: true });
+  }
+
+  async function handleDeviceHeartbeat(deviceId) {
+    await Api.heartbeatDevice(deviceId, { agent_version: "0.1.0" });
+    await loadAll(selectedUserId, { silent: true });
+  }
+
+  async function handleHealthyPosture(deviceId) {
+    await Api.submitDevicePosture(deviceId, {
+      os: "Windows",
+      os_version: "Windows 11 Enterprise 23H2",
+      firewall_enabled: true,
+      encryption_enabled: true,
+      security_product_active: true,
+      patch_state: "CURRENT"
+    });
+    await loadAll(selectedUserId, { silent: true });
+  }
+
   const pageContent = useMemo(() => {
     if (!data) return null;
     const shared = { data, onSelectUser: handleSelectUser, onDecisionSelect: handleDecisionSelect };
-    if (page === "Users") return <Users {...shared} />;
+    if (page === "Organization") return <Organization data={data} />;
+    if (page === "Users") return <Users {...shared} onCreateUser={handleCreateUser} onUpdateUser={handleUpdateUser} onDisableUser={handleDisableUser} />;
+    if (page === "Devices") return <Devices data={data} onRefreshDevice={handleDeviceHeartbeat} onSubmitHealthyPosture={handleHealthyPosture} />;
     if (page === "Security Posture") return <UserProfile {...shared} />;
     if (page === "Resources") return <Resources data={data} />;
     if (page === "Incidents") return <Incidents events={data.events} />;
@@ -128,7 +180,7 @@ export default function App() {
   if (!currentUser && !getToken()) return <Login onLogin={handleLogin} />;
 
   return (
-    <AppShell page={page} onNavigate={setPage} applications={data?.applications || []}>
+    <AppShell page={page} onNavigate={setPage} applications={data?.applications || []} organization={data?.organization}>
       {loading && <LoadingBlock />}
       {!loading && error && <ErrorBlock message={error} />}
       {!loading && !error && pageContent}

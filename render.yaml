@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: cloudsentinel-backend
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
+      - key: DATA_STORE
+        value: sqlite
+      - key: AUTO_SEED
+        value: "true"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000"

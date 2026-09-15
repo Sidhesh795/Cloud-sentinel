@@ -21,9 +21,11 @@ NORMAL USER
 
 ## Status
 
-Final engineering phase complete.
+V1.1 real-world control-plane foundation in progress.
 
-- FastAPI backend, SQLite database, JWT authentication
+- FastAPI backend, SQLite demo/fallback database, JWT authentication
+- Organization, admin user management, device registration, heartbeat, and posture APIs
+- Optional MongoDB Atlas cloud persistence foundation with PyMongo
 - Telemetry, posture tags, Isolation Forest behavioral anomaly detection
 - Transparent risk engine
 - Zero Trust Gateway and Adaptive Policy Engine
@@ -35,7 +37,7 @@ This is a controlled demo simulation. It does not execute malware, scan the host
 
 ## Technology Stack
 
-- Backend: Python, FastAPI, Pydantic, SQLAlchemy, SQLite
+- Backend: Python, FastAPI, Pydantic, SQLAlchemy, SQLite, PyMongo
 - Auth: JWT, bcrypt password hashing
 - AI/ML: scikit-learn Isolation Forest
 - Frontend: React, Vite, Tailwind CSS, Recharts, Lucide React, Axios
@@ -65,9 +67,27 @@ python -m ml.train
 python -m uvicorn backend.main:app --reload
 ```
 
+Current machine path:
+
+```bash
+cd "C:\Users\SIDHESH\OneDrive - vupune.ac.in\Desktop\cloudsentinel"
+```
+
+Configuration:
+
+```text
+DATA_STORE=sqlite
+MONGODB_URI=
+MONGODB_DATABASE=cloudsentinel
+JWT_SECRET=
+```
+
+SQLite remains the default demo/fallback data store. Set `DATA_STORE=mongodb` and `MONGODB_URI` to enable MongoDB Atlas connection and repository writes.
+
 Backend URLs:
 
 - `http://127.0.0.1:8000/api/health`
+- `http://127.0.0.1:8000/api/health/mongodb`
 - `http://127.0.0.1:8000/docs`
 - `http://127.0.0.1:8000/openapi.json`
 
@@ -118,6 +138,16 @@ Full presenter script: [docs/DEMO.md](docs/DEMO.md).
 - `GET /api/users/{user_id}/risk`
 - `GET /api/users/{user_id}/risk-history`
 - `GET /api/users/{user_id}/access-matrix`
+- `GET /api/organization`
+- `POST /api/admin/users`
+- `GET /api/admin/users`
+- `GET /api/admin/users/{user_id}`
+- `PATCH /api/admin/users/{user_id}`
+- `DELETE /api/admin/users/{user_id}`
+- `GET /api/devices`
+- `POST /api/devices/register`
+- `POST /api/devices/{device_id}/heartbeat`
+- `POST /api/devices/{device_id}/posture`
 - `POST /api/access/check`
 - `GET /api/events`
 - `POST /api/simulation/attack`
