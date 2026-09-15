@@ -58,67 +58,44 @@ APPLICATIONS = [
         "description": "Production customer records and transaction history.",
         "cloud_provider": "AWS",
         "category": "Database",
-        "sensitivity": 90,
+        "sensitivity": 75,
     },
     {
-        "name": "Admin Console",
-        "description": "Privileged control plane for infrastructure administration.",
+        "name": "Production Kubernetes Cluster",
+        "description": "Core cloud infrastructure deployment control plane.",
         "cloud_provider": "AWS",
-        "category": "Administration",
-        "sensitivity": 100,
-    },
-    {
-        "name": "Cloud Storage",
-        "description": "Shared project files and data exports.",
-        "cloud_provider": "GCP",
-        "category": "Storage",
-        "sensitivity": 70,
-    },
-    {
-        "name": "Analytics Service",
-        "description": "Operational dashboards and aggregate business metrics.",
-        "cloud_provider": "GCP",
-        "category": "Analytics",
-        "sensitivity": 60,
+        "category": "Infrastructure",
+        "sensitivity": 95,
     },
 ]
 
 BASELINE_TAGS = [
-    ("TRUSTED_DEVICE", "GREEN", "seed"),
-    ("MFA_VERIFIED", "GREEN", "seed"),
-    ("OS_COMPLIANT", "GREEN", "seed"),
-    ("AV_ACTIVE", "GREEN", "seed"),
+    ("DEVICE_HEALTHY", "LOW", "DEVICE_AGENT"),
+    ("LOCATION_BASELINE", "LOW", "NETWORK_CONTEXT"),
+    ("MFA_VERIFIED", "LOW", "IDENTITY_PROVIDER"),
 ]
 
 
 def upsert_organization(db) -> models.Organization:
-    now = datetime.now(timezone.utc)
-    organization = db.query(models.Organization).filter_by(slug="cloudsentinel-demo").first()
-    if organization is None:
-        organization = models.Organization(
+    org = db.query(models.Organization).filter_by(slug="cloudsentinel-demo").first()
+    if org is None:
+        org = models.Organization(
             name="CloudSentinel Demo",
             slug="cloudsentinel-demo",
-            status="ACTIVE",
-            environment="DEMO",
-            created_at=now,
-            updated_at=now,
+            domain="cloudsentinel.demo",
+            is_active=True,
         )
-        db.add(organization)
+        db.add(org)
         db.flush()
-    else:
-        organization.name = "CloudSentinel Demo"
-        organization.status = "ACTIVE"
-        organization.environment = "DEMO"
-        organization.updated_at = now
-    return organization
+    return org
 
 
 def upsert_user(db, organization: models.Organization, user_data: dict) -> models.User:
     user = db.query(models.User).filter_by(username=user_data["username"]).first()
     if user is None:
         user = models.User(
-            username=user_data["username"],
             organization_id=organization.id,
+            username=user_data["username"],
             password_hash=hash_password(DEMO_PASSWORD),
             display_name=user_data["display_name"],
             role=user_data["role"],
@@ -130,24 +107,23 @@ def upsert_user(db, organization: models.Organization, user_data: dict) -> model
         db.add(user)
         db.flush()
     else:
-        user.display_name = user_data["display_name"]
         user.organization_id = organization.id
+        user.display_name = user_data["display_name"]
         user.role = user_data["role"]
         user.email = user_data["email"]
         user.device_id = user_data["device_id"]
         user.status = "ACTIVE"
         user.is_active = True
-        user.updated_at = datetime.now(timezone.utc)
     return user
 
 
 def upsert_device(db, user: models.User) -> models.Device:
-    device = db.query(models.Device).filter_by(device_id=user.device_id).first()
     now = datetime.now(timezone.utc)
+    device = db.query(models.Device).filter_by(device_id=user.device_id).first()
     if device is None:
         device = models.Device(
-            device_id=user.device_id,
             organization_id=user.organization_id,
+            device_id=user.device_id,
             user_id=user.id,
             device_name=f"{user.display_name}'s Laptop",
             hostname=f"{user.username}-win11",
@@ -233,17 +209,17 @@ def upsert_baseline_telemetry(db, user: models.User, device: models.Device) -> N
     }
     if latest and all(getattr(latest, key) == value for key, value in normal.items()):
         return
-        db.add(
-            models.Telemetry(
-                user_id=user.id,
-                organization_id=user.organization_id,
-                device_id=device.id,
-                source="SIMULATION",
-                event_type="APPLICATION_ACTIVITY",
-                metadata_json={"environment": "DEMO"},
-                **normal,
-            )
+    db.add(
+        models.Telemetry(
+            user_id=user.id,
+            organization_id=user.organization_id,
+            device_id=device.id,
+            source="SIMULATION",
+            event_type="APPLICATION_ACTIVITY",
+            metadata_json={"environment": "DEMO"},
+            **normal,
         )
+    )
 
 
 def reset_simulation_state(db, user: models.User) -> None:

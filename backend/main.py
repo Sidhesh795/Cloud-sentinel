@@ -36,8 +36,9 @@ def _auto_seed_if_needed() -> None:
 
         with SessionLocal() as db:
             user_count = db.query(models.User).count()
-            if user_count == 0:
-                logger.info("No existing users found. Seeding initial demo data...")
+            telemetry_count = db.query(models.Telemetry).count()
+            if user_count == 0 or telemetry_count == 0:
+                logger.info("Seeding initial demo data and baseline telemetry...")
                 seed()
                 logger.info("Demo data seed completed successfully.")
     except Exception as exc:
