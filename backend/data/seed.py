@@ -82,8 +82,8 @@ def upsert_organization(db) -> models.Organization:
         org = models.Organization(
             name="CloudSentinel Demo",
             slug="cloudsentinel-demo",
-            domain="cloudsentinel.demo",
-            is_active=True,
+            status="ACTIVE",
+            environment="DEMO",
         )
         db.add(org)
         db.flush()
