@@ -88,6 +88,13 @@ def create_app() -> FastAPI:
     def health_alias():
         return {"status": "healthy", "service": "cloudsentinel-backend"}
 
+    @app.get("/api/seed", tags=["admin"])
+    @app.post("/api/seed", tags=["admin"])
+    def manual_seed():
+        from backend.data.seed import seed
+        seed()
+        return {"status": "ok", "message": "Demo data seeded successfully"}
+
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(organization.router, prefix="/api")
