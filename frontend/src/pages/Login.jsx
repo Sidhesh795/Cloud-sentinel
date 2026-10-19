@@ -14,7 +14,11 @@ export default function Login({ onLogin }) {
     try {
       await onLogin(username.trim(), password);
     } catch (err) {
-      setError(err?.response?.data?.detail || "Login failed");
+      if (!err?.response) {
+        setError("Cannot connect to backend server. Make sure VITE_API_BASE_URL is set in Vercel to your Render service URL.");
+      } else {
+        setError(err?.response?.data?.detail || "Login failed");
+      }
     } finally {
       setLoading(false);
     }
