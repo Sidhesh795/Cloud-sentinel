@@ -108,6 +108,7 @@ def upsert_user(db, organization: models.Organization, user_data: dict) -> model
         db.flush()
     else:
         user.organization_id = organization.id
+        user.password_hash = hash_password(DEMO_PASSWORD)
         user.display_name = user_data["display_name"]
         user.role = user_data["role"]
         user.email = user_data["email"]

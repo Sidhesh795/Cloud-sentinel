@@ -1,9 +1,9 @@
-import { ShieldCheck } from "lucide-react";
+import { ShieldCheck, UserCheck, KeyRound } from "lucide-react";
 import { useState } from "react";
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState("developer01");
-  const [password, setPassword] = useState("");
+  const [password, setPassword] = useState("CloudDemo123!");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -12,12 +12,18 @@ export default function Login({ onLogin }) {
     setLoading(true);
     setError("");
     try {
-      await onLogin(username, password);
+      await onLogin(username.trim(), password);
     } catch (err) {
       setError(err?.response?.data?.detail || "Login failed");
     } finally {
       setLoading(false);
     }
+  }
+
+  function setDemoCredentials(user) {
+    setUsername(user);
+    setPassword("CloudDemo123!");
+    setError("");
   }
 
   return (
@@ -32,6 +38,38 @@ export default function Login({ onLogin }) {
             <p className="text-sm text-slate-400">AI-Powered Adaptive Zero Trust</p>
           </div>
         </div>
+
+        <div className="mb-5 rounded-md border border-sky-500/20 bg-sky-500/10 p-3 text-xs text-sky-200">
+          <div className="font-semibold mb-1 flex items-center gap-1.5 text-sky-300">
+            <UserCheck className="h-3.5 w-3.5" />
+            Quick Demo Profiles
+          </div>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setDemoCredentials("developer01")}
+              className={`rounded px-2.5 py-1 text-xs font-medium transition ${
+                username === "developer01"
+                  ? "bg-sky-400 text-slate-950 font-bold"
+                  : "bg-sky-950/60 text-sky-300 hover:bg-sky-900/60 border border-sky-400/30"
+              }`}
+            >
+              developer01 (Nina Patel)
+            </button>
+            <button
+              type="button"
+              onClick={() => setDemoCredentials("admin01")}
+              className={`rounded px-2.5 py-1 text-xs font-medium transition ${
+                username === "admin01"
+                  ? "bg-sky-400 text-slate-950 font-bold"
+                  : "bg-sky-950/60 text-sky-300 hover:bg-sky-900/60 border border-sky-400/30"
+              }`}
+            >
+              admin01 (Avery Shah)
+            </button>
+          </div>
+        </div>
+
         <label className="metric-label" htmlFor="username">Username</label>
         <input
           id="username"
@@ -55,7 +93,9 @@ export default function Login({ onLogin }) {
         >
           {loading ? "Authenticating" : "Enter Control Center"}
         </button>
-        <p className="mt-4 text-xs text-slate-500">Demo account: developer01</p>
+        <p className="mt-4 text-xs text-slate-500 flex items-center gap-1.5">
+          <KeyRound className="h-3 w-3" /> Password for all demo accounts: <code className="text-slate-300">CloudDemo123!</code>
+        </p>
       </form>
     </div>
   );

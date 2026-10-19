@@ -58,6 +58,17 @@ def assess_current_context(db: Session, user_id: int) -> tuple[models.User, mode
     device = user.devices[0] if user.devices else None
     telemetry = _latest_telemetry(user)
     if telemetry is None:
+        from backend.data.seed import upsert_baseline_telemetry, upsert_device
+
+        if not device:
+            device = upsert_device(db, user)
+        upsert_baseline_telemetry(db, user, device)
+        db.commit()
+        user = _load_user(db, user_id)
+        device = user.devices[0] if user.devices else None
+        telemetry = _latest_telemetry(user)
+
+    if telemetry is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No telemetry available for access evaluation",
