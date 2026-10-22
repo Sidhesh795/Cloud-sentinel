@@ -1,0 +1,185 @@
+CloudSentinel Project Working Notes
+=================================
+
+What this project is
+--------------------
+CloudSentinel is a demo Zero Trust security project designed to show how access decisions can change for the same user based on risk factors such as identity, device posture, suspicious behavior, and the sensitivity of the resource being accessed.
+
+The central idea is simple:
+
+same user + same moment + different resource sensitivity = different access decision
+
+This is a hackathon/prototype project, not a real cloud IAM or malware protection system. It focuses on the control-plane logic behind adaptive access control in a multi-cloud environment.
+
+Problem it solves
+-----------------
+Traditional access control often treats every user request the same once the user is logged in. CloudSentinel shows a more adaptive approach: if a user device becomes risky, if behavior seems abnormal, or if the requested resource is highly sensitive, the system can require MFA, restrict access, or deny the request.
+
+The project demonstrates this through an interactive security dashboard and simulation.
+
+Main architecture
+-----------------
+The project has three major parts:
+
+1. Backend API (Python + FastAPI)
+2. Frontend dashboard (React + Vite)
+3. ML/anomaly logic (scikit-learn / Isolation Forest)
+
+The backend is the real decision-maker. The frontend only displays the data and the decisions returned by the backend.
+
+Backend working flow
+--------------------
+The backend app is created in backend/main.py.
+
+Important parts:
+- FastAPI app is created with CORS and version details.
+- The app includes routers for health, auth, organization, users, devices, applications, events, telemetry, risk, access control, and simulation.
+- Startup processes initialize the database and optionally seed demo data.
+- It also sets up MongoDB support if configured.
+
+The backend uses SQLAlchemy models defined in backend/models.py. These models represent:
+- organizations
+- users
+- devices
+- applications
+- telemetry
+- security events
+- risk scores
+- access requests
+- security tags
+- simulation state
+
+The database is initialized through backend/database.py. By default, it uses SQLite for the demo environment, which makes local testing easy.
+
+Configuration is in backend/config.py. It loads environment variables, decides the database URL, sets the JWT secret, and defines allowed CORS origins.
+
+Seed data is defined in backend/data/seed.py. This populates fake users, devices, applications, and baseline telemetry. The default demo user is:
+- username: developer01
+- password: CloudDemo123!
+
+This seeded data is used to simulate normal behavior before an attack starts.
+
+How access decisions are made
+-----------------------------
+The security logic is modular and separated into different responsibilities:
+
+- Telemetry: captures behavior and device activity
+- Posture logic: checks if the device is healthy and compliant
+- Security tags: assigns labels like MFA_VERIFIED or LOCATION_BASELINE
+- Anomaly detection: uses a model to detect abnormal behavior
+- Risk engine: combines identity, posture, behavior, context, and resource sensitivity
+- Policy engine: decides the final access result
+- Zero Trust gateway: coordinates evaluation and audit logging
+
+The access decision can be one of:
+- ALLOW
+- MFA_REQUIRED
+- READ_ONLY
+- DENY
+- ISOLATE
+
+This is the core project story: when risk rises, sensitive resources get restricted while lower-risk ones may still be allowed.
+
+ML/anomaly component
+--------------------
+The ML part lives under the ml folder.
+
+- ml/train.py trains or prepares the model
+- ml/model.pkl stores the trained model
+
+The system uses an Isolation Forest model to detect abnormal behavior patterns like unusual request rates, excessive downloads, failed logins, or sudden shifts in app usage. This contributes to the risk score, but it is not the only factor.
+
+Frontend working flow
+---------------------
+The frontend is built using React + Vite + Tailwind.
+
+Main entry:
+- frontend/src/App.jsx
+
+This app loads the current user, organizations, devices, applications, events, access matrix, and risk data from the backend. It renders pages such as:
+- Dashboard
+- Users
+- Organization
+- Devices
+- Security Posture
+- Resources
+- Incidents
+- Audit Logs
+
+The UI does not calculate the final access decision locally. It just asks the backend for access decisions and presents them.
+
+Demo simulation flow
+--------------------
+The demo is designed to show a staged attack simulation.
+
+Initial state:
+- user is healthy
+- low risk
+- safe tags
+- normal telemetry
+
+Then a simulated attack occurs:
+- device changes or new behavior is detected
+- telemetry spikes
+- posture degrades
+- anomaly risk increases
+- risk score boosts
+- policy engine re-evaluates each application
+
+Sensitive resources become restricted or denied while lower risk ones remain accessible.
+
+Reset functionality restores the environment to the baseline state.
+
+Data and models
+---------------
+The app stores important information in SQLAlchemy models:
+- User identity and roles
+- Device health and posture
+- Application metadata and sensitivity
+- Telemetry values
+- Risk scores
+- Event logs
+- Security tags
+- Simulation state
+
+This gives the backend a structured way to monitor and explain risk over time.
+
+Why the system matters
+----------------------
+CloudSentinel demonstrates how adaptive Zero Trust can be modeled in a simple but convincing way:
+- not every user gets the same access everywhere
+- a user can be trusted for one resource and restricted for another
+- security decisions can be based on real-time context and risk scoring
+
+This makes the project a good demo for an evaluator because it shows both product understanding and engineering structure.
+
+How to run locally
+------------------
+Backend:
+
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m backend.data.seed
+uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+
+Frontend:
+
+cd frontend
+npm install
+npm run dev
+
+Then open:
+http://localhost:5173
+
+Deployment references
+---------------------
+The project includes deployment links:
+- Render backend: https://cloud-sentinel-1-cdvy.onrender.com
+- Vercel frontend: https://cloud-sentinel-dnxt.vercel.app/
+
+The frontend production config points to the backend URL and is designed to work in deployed mode.
+
+Summary
+-------
+CloudSentinel is a demonstration of adaptive Zero Trust for cloud applications. It combines a FastAPI backend, React dashboard, SQLAlchemy data model, and risk-based policy engine to simulate how access control can become smarter and more context-aware. The project is designed to explain the real concept clearly to a reviewer or evaluator while staying lightweight and demo-friendly.
