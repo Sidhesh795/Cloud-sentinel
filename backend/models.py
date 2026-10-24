@@ -99,6 +99,7 @@ class Application(Base):
     category: Mapped[str] = mapped_column(String(64), nullable=False)
     sensitivity: Mapped[int] = mapped_column(Integer, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    upstream_host: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     access_requests: Mapped[list["AccessRequest"]] = relationship(back_populates="application")

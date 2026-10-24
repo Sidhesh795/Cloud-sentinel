@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from backend import models
-from backend.config import DEMO_MODE, JWT_SECRET
+from backend.config import DEMO_MODE, JWT_SECRET, SESSION_MINUTES
 from backend.database import get_db
 
 
@@ -32,6 +32,21 @@ def create_access_token(subject: str, expires_delta: timedelta | None = None) ->
     )
     payload = {"sub": subject, "exp": expire}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_gateway_token(subject: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=SESSION_MINUTES)
+    return jwt.encode({"sub": subject, "aud": "gateway", "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def username_from_token(token: str) -> str | None:
+    """Accepts a gateway session token or a regular access token."""
+    for kwargs in ({"audience": "gateway"}, {}):
+        try:
+            return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], **kwargs).get("sub")
+        except jwt.PyJWTError:
+            continue
+    return None
 
 
 def authenticate_user(db: Session, username: str, password: str) -> models.User | None:

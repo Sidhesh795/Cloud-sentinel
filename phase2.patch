@@ -1,0 +1,605 @@
+diff --git a/Dockerfile b/Dockerfile
+new file mode 100644
+index 0000000..a174934
+--- /dev/null
++++ b/Dockerfile
+@@ -0,0 +1,6 @@
++FROM python:3.12-slim
++WORKDIR /app
++COPY requirements.txt .
++RUN pip install --no-cache-dir -r requirements.txt
++COPY . .
++CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+diff --git a/backend/api/access.py b/backend/api/access.py
+index fbd94dc..b1d2169 100644
+--- a/backend/api/access.py
++++ b/backend/api/access.py
+@@ -1,7 +1,7 @@
+-from fastapi import APIRouter, Depends
++from fastapi import APIRouter, Depends, HTTPException, status
+ from sqlalchemy.orm import Session
+ 
+-from backend.auth.auth import get_current_user
++from backend.auth.auth import get_current_user, normalize_role
+ from backend.database import get_db
+ from backend.models import User
+ from backend.schemas import AccessCheckRequest, AccessDecisionRead, AccessMatrixItem
+@@ -11,6 +11,16 @@ from backend.security.zero_trust_gateway import GatewayDecision, evaluate_access
+ router = APIRouter(tags=["access"])
+ 
+ 
++def _authorize_subject(db: Session, current_user: User, user_id: int) -> None:
++    if user_id == current_user.id:
++        return
++    privileged = normalize_role(current_user.role) in {"ADMIN", "SECURITY_ANALYST", "ANALYST"}
++    target = db.query(User).filter(User.id == user_id).first()
++    same_org = target is not None and target.organization_id == current_user.organization_id
++    if not (privileged and same_org):
++        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to evaluate access for this user")
++
++
+ def _decision_response(decision: GatewayDecision, action: str) -> AccessDecisionRead:
+     return AccessDecisionRead(
+         user_id=decision.user.id,
+@@ -38,6 +48,7 @@ def check_access(
+     db: Session = Depends(get_db),
+     current_user: User = Depends(get_current_user),
+ ) -> AccessDecisionRead:
++    _authorize_subject(db, current_user, payload.user_id)
+     decision = evaluate_access(
+         db,
+         user_id=payload.user_id,
+@@ -55,6 +66,7 @@ def get_access_matrix(
+     db: Session = Depends(get_db),
+     current_user: User = Depends(get_current_user),
+ ) -> list[AccessMatrixItem]:
++    _authorize_subject(db, current_user, user_id)
+     decisions = evaluate_access_matrix(db, user_id=user_id, action=action)
+     return [
+         AccessMatrixItem(
+diff --git a/backend/api/enforce.py b/backend/api/enforce.py
+new file mode 100644
+index 0000000..e20ddee
+--- /dev/null
++++ b/backend/api/enforce.py
+@@ -0,0 +1,182 @@
++import html
++import logging
++import time
++from datetime import datetime, timezone
++from urllib.parse import urlparse
++
++from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
++from fastapi.responses import HTMLResponse, RedirectResponse
++from pydantic import BaseModel, Field
++from sqlalchemy.orm import Session
++
++from backend import config, models
++from backend.auth.auth import (
++    authenticate_user,
++    create_gateway_token,
++    require_admin_or_security,
++    username_from_token,
++)
++from backend.database import get_db
++from backend.security.zero_trust_gateway import evaluate_access, primary_device
++
++router = APIRouter(prefix="/enforce", tags=["enforcement"])
++logger = logging.getLogger("uvicorn.error")
++COOKIE = "cs_session"
++_cache: dict[tuple, tuple[float, int, dict]] = {}
++
++
++def clear_cache() -> None:
++    _cache.clear()
++
++
++def _host(request: Request) -> str:
++    raw = request.headers.get("x-forwarded-host") or request.headers.get("x-original-host") or ""
++    host = raw.split(",")[0].strip().lower()
++    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
++
++
++def _action(request: Request) -> str:
++    method = (request.headers.get("x-original-method") or request.method).upper()
++    if method in {"GET", "HEAD", "OPTIONS"}:
++        return "READ"
++    return "DELETE" if method == "DELETE" else "WRITE"
++
++
++def _token(request: Request) -> str | None:
++    auth = request.headers.get("authorization", "")
++    if auth.lower().startswith("bearer "):
++        return auth[7:].strip()
++    return request.cookies.get(COOKIE)
++
++
++def _reply(code: int, decision: str, reason: str, **extra: str) -> Response:
++    safe = reason.encode("ascii", "ignore").decode().replace("\n", " ")[:200]
++    headers = {"X-CloudSentinel-Decision": decision, "X-CloudSentinel-Reason": safe, **extra}
++    return Response(status_code=code, headers=headers)
++
++
++def _device_gate(user: models.User) -> str | None:
++    device = primary_device(user)
++    if device is None:
++        return "No enrolled device"
++    seen = device.last_seen if device.last_seen.tzinfo else device.last_seen.replace(tzinfo=timezone.utc)
++    if (datetime.now(timezone.utc) - seen).total_seconds() > config.DEVICE_STALE_SECONDS:
++        return "Device agent is offline"
++    if device.posture_status == "UNKNOWN":
++        return "Device posture not reported"
++    return None
++
++
++@router.api_route("/verify", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
++def verify(request: Request, db: Session = Depends(get_db)) -> Response:
++    """Forward-auth endpoint for Nginx auth_request / Traefik / Caddy. Fails closed."""
++    host = _host(request)
++    app = db.query(models.Application).filter(models.Application.upstream_host == host, models.Application.is_active.is_(True)).first() if host else None
++    if app is None:
++        return _reply(403, "DENY", "Unknown protected resource")
++    token = _token(request)
++    username = username_from_token(token) if token else None
++    user = db.query(models.User).filter(models.User.username == username).first() if username else None
++    if user is None or not user.is_active or getattr(user, "status", "ACTIVE") != "ACTIVE":
++        return _reply(401, "AUTH_REQUIRED", "Authentication required")
++    if app.organization_id is not None and user.organization_id != app.organization_id:
++        return _reply(403, "DENY", "Resource belongs to another organization")
++    if config.REQUIRE_AGENT_DEVICE:
++        problem = _device_gate(user)
++        if problem:
++            return _reply(403, "DENY", problem)
++
++    action = _action(request)
++    key = (user.id, app.id, action)
++    hit = _cache.get(key)
++    if hit and time.monotonic() - hit[0] < config.ENFORCE_CACHE_SECONDS:
++        return Response(status_code=hit[1], headers=hit[2])
++    try:
++        d = evaluate_access(db, user_id=user.id, application_id=app.id, action=action, persist=True).policy
++    except HTTPException as exc:
++        logger.warning("enforce evaluation failed: %s", exc.detail)
++        return _reply(403, "DENY", "Access could not be evaluated")
++    except Exception:
++        logger.exception("enforce unexpected error")
++        return _reply(403, "DENY", "Access could not be evaluated")
++
++    allowed = d.decision == "ALLOW" or (d.decision == "READ_ONLY" and action == "READ")
++    response = _reply(
++        200 if allowed else 403,
++        d.decision,
++        d.reason,
++        **({"X-CloudSentinel-User": user.username, "X-CloudSentinel-Risk": str(d.risk_score)} if allowed else {}),
++    )
++    _cache[key] = (time.monotonic(), response.status_code, dict(response.headers))
++    return response
++
++
++class HostBody(BaseModel):
++    upstream_host: str | None = Field(default=None, max_length=255, pattern=r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
++
++
++@router.put("/applications/{application_id}/host", status_code=status.HTTP_204_NO_CONTENT)
++def set_upstream_host(
++    application_id: int,
++    body: HostBody,
++    db: Session = Depends(get_db),
++    admin: models.User = Depends(require_admin_or_security),
++) -> None:
++    query = db.query(models.Application).filter(models.Application.id == application_id)
++    app = query.first()
++    if app is None or (app.organization_id is not None and app.organization_id != admin.organization_id):
++        raise HTTPException(status_code=404, detail="Application not found")
++    if body.upstream_host and db.query(models.Application).filter(models.Application.upstream_host == body.upstream_host, models.Application.id != app.id).first():
++        raise HTTPException(status_code=409, detail="Host already mapped")
++    app.upstream_host = body.upstream_host
++    db.commit()
++    clear_cache()
++
++
++def _set_cookie(response: Response, username: str) -> None:
++    response.set_cookie(
++        COOKIE, create_gateway_token(username), max_age=config.SESSION_MINUTES * 60,
++        httponly=True, secure=config.IS_PRODUCTION, samesite="lax", domain=config.COOKIE_DOMAIN,
++    )
++
++
++@router.post("/session", status_code=status.HTTP_204_NO_CONTENT)
++def create_session(request: Request, response: Response, db: Session = Depends(get_db)) -> None:
++    username = username_from_token(_token(request) or "")
++    if not username:
++        raise HTTPException(status_code=401, detail="Not authenticated")
++    _set_cookie(response, username)
++
++
++def _safe_next(db: Session, target: str) -> str | None:
++    parsed = urlparse(target)
++    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
++        return None
++    ok = db.query(models.Application).filter(models.Application.upstream_host == parsed.hostname.lower()).first()
++    return target if ok else None
++
++
++_FORM = """<!doctype html><meta charset=utf-8><title>CloudSentinel</title>
++<body style="font-family:system-ui;max-width:340px;margin:12vh auto"><h2>CloudSentinel sign-in</h2>{msg}
++<form method=post><input type=hidden name=next value="{nxt}">
++<p><input name=username placeholder=Username autofocus style="width:100%;padding:8px"></p>
++<p><input name=password type=password placeholder=Password style="width:100%;padding:8px"></p>
++<button style="padding:8px 16px">Sign in</button></form></body>"""
++
++
++@router.get("/login", response_class=HTMLResponse, include_in_schema=False)
++def login_page(next: str = "") -> HTMLResponse:
++    return HTMLResponse(_FORM.format(msg="", nxt=html.escape(next, quote=True)))
++
++
++@router.post("/login", include_in_schema=False)
++def login_submit(username: str = Form(...), password: str = Form(...), next: str = Form(""), db: Session = Depends(get_db)):
++    user = authenticate_user(db, username, password)
++    if user is None:
++        return HTMLResponse(_FORM.format(msg="<p style=color:#b00>Invalid credentials</p>", nxt=html.escape(next, quote=True)), status_code=401)
++    destination = _safe_next(db, next) if next else None
++    if next and destination is None:
++        raise HTTPException(status_code=400, detail="Invalid redirect target")
++    response = RedirectResponse(destination, status_code=303) if destination else HTMLResponse("Signed in. You can close this tab.")
++    _set_cookie(response, user.username)
++    return response
+diff --git a/backend/auth/auth.py b/backend/auth/auth.py
+index b8a116b..8b68ef6 100644
+--- a/backend/auth/auth.py
++++ b/backend/auth/auth.py
+@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+ from sqlalchemy.orm import Session
+ 
+ from backend import models
+-from backend.config import DEMO_MODE, JWT_SECRET
++from backend.config import DEMO_MODE, JWT_SECRET, SESSION_MINUTES
+ from backend.database import get_db
+ 
+ 
+@@ -34,6 +34,21 @@ def create_access_token(subject: str, expires_delta: timedelta | None = None) ->
+     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+ 
+ 
++def create_gateway_token(subject: str) -> str:
++    expire = datetime.now(timezone.utc) + timedelta(minutes=SESSION_MINUTES)
++    return jwt.encode({"sub": subject, "aud": "gateway", "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
++
++
++def username_from_token(token: str) -> str | None:
++    """Accepts a gateway session token or a regular access token."""
++    for kwargs in ({"audience": "gateway"}, {}):
++        try:
++            return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], **kwargs).get("sub")
++        except jwt.PyJWTError:
++            continue
++    return None
++
++
+ def authenticate_user(db: Session, username: str, password: str) -> models.User | None:
+     clean_username = (username or "").strip()
+     user = (
+diff --git a/backend/config.py b/backend/config.py
+index 85d8db1..e6cd049 100644
+--- a/backend/config.py
++++ b/backend/config.py
+@@ -29,6 +29,11 @@ IS_PRODUCTION = APP_ENV == "production"
+ DEMO_MODE = _flag("DEMO_MODE", not IS_PRODUCTION)
+ AUTO_SEED = _flag("AUTO_SEED", DEMO_MODE) and DEMO_MODE
+ SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
++REQUIRE_AGENT_DEVICE = _flag("REQUIRE_AGENT_DEVICE", IS_PRODUCTION)
++DEVICE_STALE_SECONDS = int(os.getenv("DEVICE_STALE_SECONDS", "900"))
++ENFORCE_CACHE_SECONDS = int(os.getenv("ENFORCE_CACHE_SECONDS", "15"))
++SESSION_MINUTES = int(os.getenv("SESSION_MINUTES", "480"))
++COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
+ 
+ _DEV_SECRET = "cloudsentinel-dev-secret-change-me"
+ JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("CLOUDSENTINEL_SECRET_KEY") or _DEV_SECRET
+diff --git a/backend/database.py b/backend/database.py
+index 8d6981e..836eaa0 100644
+--- a/backend/database.py
++++ b/backend/database.py
+@@ -62,7 +62,7 @@ def _ensure_sqlite_v11_columns() -> None:
+             ("credential_hash", "VARCHAR(64)"),
+             ("credential_issued_at", "DATETIME"),
+         ],
+-        "applications": [("organization_id", "INTEGER")],
++        "applications": [("organization_id", "INTEGER"), ("upstream_host", "VARCHAR(255)")],
+         "security_events": [
+             ("organization_id", "INTEGER"),
+             ("source", "VARCHAR(32) DEFAULT 'SYSTEM' NOT NULL"),
+diff --git a/backend/main.py b/backend/main.py
+index 96763b4..5bbb1fa 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -12,6 +12,7 @@ from backend.api import (
+     applications,
+     auth,
+     devices,
++    enforce,
+     events,
+     health,
+     organization,
+@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
+     app.include_router(organization.router, prefix="/api")
+     app.include_router(admin.router, prefix="/api")
+     app.include_router(users.router, prefix="/api")
++    app.include_router(enforce.router, prefix="/api")
+     app.include_router(agent.router, prefix="/api")
+     app.include_router(devices.router, prefix="/api")
+     app.include_router(applications.router, prefix="/api")
+diff --git a/backend/models.py b/backend/models.py
+index 0ca8fc8..0e2b37d 100644
+--- a/backend/models.py
++++ b/backend/models.py
+@@ -99,6 +99,7 @@ class Application(Base):
+     category: Mapped[str] = mapped_column(String(64), nullable=False)
+     sensitivity: Mapped[int] = mapped_column(Integer, nullable=False)
+     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
++    upstream_host: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
+     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+ 
+     access_requests: Mapped[list["AccessRequest"]] = relationship(back_populates="application")
+diff --git a/backend/security/zero_trust_gateway.py b/backend/security/zero_trust_gateway.py
+index 428f6c2..f2be780 100644
+--- a/backend/security/zero_trust_gateway.py
++++ b/backend/security/zero_trust_gateway.py
+@@ -4,6 +4,7 @@ from fastapi import HTTPException, status
+ from sqlalchemy.orm import Session, selectinload
+ 
+ from backend import models
++from backend.config import DEMO_MODE
+ from backend.security.anomaly import assess_behavior
+ from backend.security.policy_engine import PolicyDecision, evaluate_policy
+ from backend.security.posture import evaluate_posture
+@@ -47,6 +48,11 @@ def _load_application(db: Session, application_id: int) -> models.Application:
+     return application
+ 
+ 
++def primary_device(user: models.User) -> models.Device | None:
++    active = [d for d in user.devices if d.status != "REVOKED"]
++    return max(active, key=lambda d: d.last_seen) if active else None
++
++
+ def _latest_telemetry(user: models.User):
+     if not user.telemetry:
+         return None
+@@ -55,9 +61,9 @@ def _latest_telemetry(user: models.User):
+ 
+ def assess_current_context(db: Session, user_id: int) -> tuple[models.User, models.Device | None, RiskAssessment, list[models.SecurityTag]]:
+     user = _load_user(db, user_id)
+-    device = user.devices[0] if user.devices else None
++    device = primary_device(user)
+     telemetry = _latest_telemetry(user)
+-    if telemetry is None:
++    if telemetry is None and DEMO_MODE:
+         from backend.data.seed import upsert_baseline_telemetry, upsert_device
+ 
+         if not device:
+@@ -65,7 +71,7 @@ def assess_current_context(db: Session, user_id: int) -> tuple[models.User, mode
+         upsert_baseline_telemetry(db, user, device)
+         db.commit()
+         user = _load_user(db, user_id)
+-        device = user.devices[0] if user.devices else None
++        device = primary_device(user)
+         telemetry = _latest_telemetry(user)
+ 
+     if telemetry is None:
+diff --git a/deploy/docker-compose.yml b/deploy/docker-compose.yml
+new file mode 100644
+index 0000000..faf7a19
+--- /dev/null
++++ b/deploy/docker-compose.yml
+@@ -0,0 +1,16 @@
++# Local demo: http://hr.localtest.me (resolves to 127.0.0.1) -> nginx -> CloudSentinel check -> sample app
++services:
++  backend:
++    build: ..
++    environment:
++      APP_ENV: development
++      DEMO_MODE: "true"
++      COOKIE_DOMAIN: .localtest.me
++    ports: ["8000:8000"]
++  sample:
++    image: nginx:alpine
++  gateway:
++    image: nginx:1.27-alpine
++    volumes: ["./nginx.conf:/etc/nginx/nginx.conf:ro"]
++    ports: ["80:80"]
++    depends_on: [backend, sample]
+diff --git a/deploy/nginx.conf b/deploy/nginx.conf
+new file mode 100644
+index 0000000..854b8ac
+--- /dev/null
++++ b/deploy/nginx.conf
+@@ -0,0 +1,35 @@
++# CloudSentinel enforcement point: every request to a protected host is checked via auth_request.
++events {}
++http {
++  upstream cs_backend { server backend:8000; }
++  upstream sample_app { server sample:80; }
++
++  server {
++    listen 80;
++    server_name hr.localtest.me;
++
++    location = /_cs_verify {
++      internal;
++      proxy_pass http://cs_backend/api/enforce/verify;
++      proxy_pass_request_body off;
++      proxy_set_header Content-Length "";
++      proxy_set_header X-Forwarded-Host $host;
++      proxy_set_header X-Original-Method $request_method;
++      proxy_set_header Authorization $http_authorization;
++      proxy_set_header Cookie $http_cookie;
++    }
++
++    location / {
++      auth_request /_cs_verify;
++      auth_request_set $cs_user $upstream_http_x_cloudsentinel_user;
++      proxy_set_header X-Forwarded-User $cs_user;
++      proxy_set_header X-Forwarded-Host $host;
++      proxy_pass http://sample_app;
++      error_page 401 = @login;
++      error_page 403 = @denied;
++    }
++
++    location @login  { return 302 http://login.localtest.me:8000/api/enforce/login?next=http://$host$request_uri; }
++    location @denied { default_type text/plain; return 403 "Blocked by CloudSentinel Zero Trust policy.\n"; }
++  }
++}
+diff --git a/migrations/versions/aa775d4a59b7_application_upstream_host.py b/migrations/versions/aa775d4a59b7_application_upstream_host.py
+new file mode 100644
+index 0000000..c3f1410
+--- /dev/null
++++ b/migrations/versions/aa775d4a59b7_application_upstream_host.py
+@@ -0,0 +1,34 @@
++"""application upstream host
++
++Revision ID: aa775d4a59b7
++Revises: 26b2285ea24f
++Create Date: 2026-10-24 07:03:02.275110
++
++"""
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++
++
++# revision identifiers, used by Alembic.
++revision: str = 'aa775d4a59b7'
++down_revision: Union[str, Sequence[str], None] = '26b2285ea24f'
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Upgrade schema."""
++    # ### commands auto generated by Alembic - please adjust! ###
++    op.add_column('applications', sa.Column('upstream_host', sa.String(length=255), nullable=True))
++    op.create_index(op.f('ix_applications_upstream_host'), 'applications', ['upstream_host'], unique=True)
++    # ### end Alembic commands ###
++
++
++def downgrade() -> None:
++    """Downgrade schema."""
++    # ### commands auto generated by Alembic - please adjust! ###
++    op.drop_index(op.f('ix_applications_upstream_host'), table_name='applications')
++    op.drop_column('applications', 'upstream_host')
++    # ### end Alembic commands ###
+diff --git a/requirements.txt b/requirements.txt
+index 91a256d..144890a 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -13,3 +13,4 @@ python-dotenv==1.1.1
+ alembic==1.16.4
+ psycopg[binary]==3.2.9
+ sentry-sdk[fastapi]==2.34.1
++python-multipart==0.0.20
+diff --git a/tests/test_enforce.py b/tests/test_enforce.py
+new file mode 100644
+index 0000000..3f4a25c
+--- /dev/null
++++ b/tests/test_enforce.py
+@@ -0,0 +1,99 @@
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from backend import config, models
++from backend.api import enforce
++from backend.auth.auth import hash_password
++from tests.conftest import TestingSessionLocal
++
++H = {"x-forwarded-host": "email.test"}
++
++
++@pytest.fixture(autouse=True)
++def _setup(client, monkeypatch):
++    monkeypatch.setattr(config, "ENFORCE_CACHE_SECONDS", 0)
++    enforce.clear_cache()
++    with TestingSessionLocal() as db:
++        for name, host in (("Email", "email.test"), ("Admin Console", "admin.test")):
++            db.query(models.Application).filter(models.Application.name == name).first().upstream_host = host
++        org = db.query(models.Organization).first()
++        db.add(models.User(organization_id=org.id, username="other", password_hash=hash_password("OtherPass12345"),
++                           display_name="O", role="employee", email="o@x.com", is_active=True))
++        db.commit()
++
++
++def _login(client, u="developer01", p="CloudDemo123!"):
++    return client.post("/api/auth/login", json={"username": u, "password": p}).json()["access_token"]
++
++
++def _bearer(t):
++    return {**H, "authorization": f"Bearer {t}"}
++
++
++def test_unknown_host_denied(client):
++    assert client.get("/api/enforce/verify", headers={"x-forwarded-host": "nope.test"}).status_code == 403
++    assert client.get("/api/enforce/verify").status_code == 403
++
++
++def test_no_auth_is_401(client):
++    assert client.get("/api/enforce/verify", headers=H).status_code == 401
++
++
++def test_healthy_user_low_sensitivity_allowed(client):
++    r = client.get("/api/enforce/verify", headers=_bearer(_login(client)))
++    assert r.status_code == 200 and r.headers["x-cloudsentinel-user"] == "developer01"
++
++
++def test_critical_resource_not_silently_allowed(client):
++    h = {"x-forwarded-host": "admin.test", "authorization": f"Bearer {_login(client)}"}
++    r = client.get("/api/enforce/verify", headers=h)
++    assert r.status_code == 403 and r.headers["x-cloudsentinel-decision"] in {"MFA_REQUIRED", "DENY", "ISOLATE"}
++
++
++def test_gateway_cookie_works_and_is_not_an_api_token(client):
++    t = _login(client)
++    r = client.post("/api/enforce/session", headers={"authorization": f"Bearer {t}"})
++    assert r.status_code == 204 and "httponly" in r.headers["set-cookie"].lower()
++    cookie = r.cookies.get("cs_session")
++    client.cookies.clear()
++    assert client.get("/api/enforce/verify", headers=H, cookies={"cs_session": cookie}).status_code == 200
++    assert client.get("/api/auth/me", headers={"authorization": f"Bearer {cookie}"}).status_code == 401
++
++
++def test_stale_or_revoked_device_blocked_when_required(client, monkeypatch):
++    monkeypatch.setattr(config, "REQUIRE_AGENT_DEVICE", True)
++    h = _bearer(_login(client))
++    assert client.get("/api/enforce/verify", headers=h).status_code == 200
++    with TestingSessionLocal() as db:
++        d = db.query(models.Device).first()
++        d.last_seen = datetime.now(timezone.utc) - timedelta(hours=2)
++        db.commit()
++    assert client.get("/api/enforce/verify", headers=h).status_code == 403
++    with TestingSessionLocal() as db:
++        d = db.query(models.Device).first()
++        d.last_seen, d.status = datetime.now(timezone.utc), "REVOKED"
++        db.commit()
++    assert client.get("/api/enforce/verify", headers=h).status_code == 403
++
++
++def test_login_redirect_only_to_registered_hosts(client):
++    ok = client.post("/api/enforce/login", data={"username": "developer01", "password": "CloudDemo123!", "next": "http://email.test/x"}, follow_redirects=False)
++    assert ok.status_code == 303 and "cs_session" in ok.headers["set-cookie"]
++    bad = client.post("/api/enforce/login", data={"username": "developer01", "password": "CloudDemo123!", "next": "https://evil.com"}, follow_redirects=False)
++    assert bad.status_code == 400
++    assert client.post("/api/enforce/login", data={"username": "developer01", "password": "x"}).status_code == 401
++
++
++def test_cannot_query_other_users_access(client):
++    t = _login(client)
++    with TestingSessionLocal() as db:
++        oid = db.query(models.User).filter(models.User.username == "other").first().id
++        app_id = db.query(models.Application).first().id
++    h = {"authorization": f"Bearer {t}"}
++    assert client.get(f"/api/users/{oid}/access-matrix", headers=h).status_code == 403
++    assert client.post("/api/access/check", headers=h, json={"user_id": oid, "application_id": app_id, "action": "READ"}).status_code == 403
++
++
++def test_only_admin_can_map_hosts(client):
++    assert client.put("/api/enforce/applications/1/host", headers={"authorization": f"Bearer {_login(client)}"}, json={"upstream_host": "a.test"}).status_code == 403

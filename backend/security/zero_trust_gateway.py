@@ -4,6 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, selectinload
 
 from backend import models
+from backend.config import DEMO_MODE
 from backend.security.anomaly import assess_behavior
 from backend.security.policy_engine import PolicyDecision, evaluate_policy
 from backend.security.posture import evaluate_posture
@@ -47,6 +48,11 @@ def _load_application(db: Session, application_id: int) -> models.Application:
     return application
 
 
+def primary_device(user: models.User) -> models.Device | None:
+    active = [d for d in user.devices if d.status != "REVOKED"]
+    return max(active, key=lambda d: d.last_seen) if active else None
+
+
 def _latest_telemetry(user: models.User):
     if not user.telemetry:
         return None
@@ -55,9 +61,9 @@ def _latest_telemetry(user: models.User):
 
 def assess_current_context(db: Session, user_id: int) -> tuple[models.User, models.Device | None, RiskAssessment, list[models.SecurityTag]]:
     user = _load_user(db, user_id)
-    device = user.devices[0] if user.devices else None
+    device = primary_device(user)
     telemetry = _latest_telemetry(user)
-    if telemetry is None:
+    if telemetry is None and DEMO_MODE:
         from backend.data.seed import upsert_baseline_telemetry, upsert_device
 
         if not device:
@@ -65,7 +71,7 @@ def assess_current_context(db: Session, user_id: int) -> tuple[models.User, mode
         upsert_baseline_telemetry(db, user, device)
         db.commit()
         user = _load_user(db, user_id)
-        device = user.devices[0] if user.devices else None
+        device = primary_device(user)
         telemetry = _latest_telemetry(user)
 
     if telemetry is None:

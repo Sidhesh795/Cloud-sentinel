@@ -29,6 +29,11 @@ IS_PRODUCTION = APP_ENV == "production"
 DEMO_MODE = _flag("DEMO_MODE", not IS_PRODUCTION)
 AUTO_SEED = _flag("AUTO_SEED", DEMO_MODE) and DEMO_MODE
 SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+REQUIRE_AGENT_DEVICE = _flag("REQUIRE_AGENT_DEVICE", IS_PRODUCTION)
+DEVICE_STALE_SECONDS = int(os.getenv("DEVICE_STALE_SECONDS", "900"))
+ENFORCE_CACHE_SECONDS = int(os.getenv("ENFORCE_CACHE_SECONDS", "15"))
+SESSION_MINUTES = int(os.getenv("SESSION_MINUTES", "480"))
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
 
 _DEV_SECRET = "cloudsentinel-dev-secret-change-me"
 JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("CLOUDSENTINEL_SECRET_KEY") or _DEV_SECRET

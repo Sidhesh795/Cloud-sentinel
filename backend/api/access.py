@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from backend.auth.auth import get_current_user
+from backend.auth.auth import get_current_user, normalize_role
 from backend.database import get_db
 from backend.models import User
 from backend.schemas import AccessCheckRequest, AccessDecisionRead, AccessMatrixItem
@@ -9,6 +9,16 @@ from backend.security.zero_trust_gateway import GatewayDecision, evaluate_access
 
 
 router = APIRouter(tags=["access"])
+
+
+def _authorize_subject(db: Session, current_user: User, user_id: int) -> None:
+    if user_id == current_user.id:
+        return
+    privileged = normalize_role(current_user.role) in {"ADMIN", "SECURITY_ANALYST", "ANALYST"}
+    target = db.query(User).filter(User.id == user_id).first()
+    same_org = target is not None and target.organization_id == current_user.organization_id
+    if not (privileged and same_org):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to evaluate access for this user")
 
 
 def _decision_response(decision: GatewayDecision, action: str) -> AccessDecisionRead:
@@ -38,6 +48,7 @@ def check_access(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> AccessDecisionRead:
+    _authorize_subject(db, current_user, payload.user_id)
     decision = evaluate_access(
         db,
         user_id=payload.user_id,
@@ -55,6 +66,7 @@ def get_access_matrix(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[AccessMatrixItem]:
+    _authorize_subject(db, current_user, user_id)
     decisions = evaluate_access_matrix(db, user_id=user_id, action=action)
     return [
         AccessMatrixItem(

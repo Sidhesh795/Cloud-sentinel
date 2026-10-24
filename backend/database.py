@@ -62,7 +62,7 @@ def _ensure_sqlite_v11_columns() -> None:
             ("credential_hash", "VARCHAR(64)"),
             ("credential_issued_at", "DATETIME"),
         ],
-        "applications": [("organization_id", "INTEGER")],
+        "applications": [("organization_id", "INTEGER"), ("upstream_host", "VARCHAR(255)")],
         "security_events": [
             ("organization_id", "INTEGER"),
             ("source", "VARCHAR(32) DEFAULT 'SYSTEM' NOT NULL"),
