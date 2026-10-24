@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from backend import models
-from backend.config import JWT_SECRET
+from backend.config import DEMO_MODE, JWT_SECRET
 from backend.database import get_db
 
 
@@ -41,7 +41,7 @@ def authenticate_user(db: Session, username: str, password: str) -> models.User 
         .filter(models.User.username.ilike(clean_username))
         .first()
     )
-    if not user:
+    if not user and DEMO_MODE:
         from backend.data.seed import (
             DEMO_PASSWORD,
             USERS,
@@ -67,18 +67,6 @@ def authenticate_user(db: Session, username: str, password: str) -> models.User 
 
     if not user:
         return None
-
-    if clean_username.lower() in {"developer01", "admin01", "employee01", "analyst01"}:
-        from backend.data.seed import DEMO_PASSWORD
-
-        if password == DEMO_PASSWORD:
-            if not user.is_active or getattr(user, "status", "ACTIVE") != "ACTIVE" or not verify_password(password, user.password_hash):
-                user.password_hash = hash_password(DEMO_PASSWORD)
-                user.status = "ACTIVE"
-                user.is_active = True
-                db.commit()
-                db.refresh(user)
-            return user
 
     if not user.is_active or getattr(user, "status", "ACTIVE") != "ACTIVE":
         return None

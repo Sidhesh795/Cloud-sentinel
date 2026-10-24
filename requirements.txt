@@ -10,3 +10,6 @@ httpx==0.28.1
 scikit-learn==1.7.1
 pymongo==4.14.0
 python-dotenv==1.1.1
+alembic==1.16.4
+psycopg[binary]==3.2.9
+sentry-sdk[fastapi]==2.34.1

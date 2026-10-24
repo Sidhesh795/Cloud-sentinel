@@ -19,11 +19,16 @@ from backend.api import (
     telemetry,
     users,
 )
-from backend.config import AUTO_SEED, DATA_STORE, get_allowed_origins
+from backend.config import APP_ENV, AUTO_SEED, DATA_STORE, DEMO_MODE, IS_PRODUCTION, SENTRY_DSN, get_allowed_origins
 from backend.database import init_db
 from backend.db.mongodb import close_mongodb, init_mongodb
 
 logger = logging.getLogger("uvicorn.error")
+
+if SENTRY_DSN:
+    import sentry_sdk
+
+    sentry_sdk.init(dsn=SENTRY_DSN, environment=APP_ENV, traces_sample_rate=0.1, send_default_pii=False)
 
 
 def _auto_seed_if_needed() -> None:
@@ -47,7 +52,8 @@ def _auto_seed_if_needed() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    init_db()
+    if not IS_PRODUCTION:
+        init_db()  # production schema is managed by Alembic: `alembic upgrade head`
     _auto_seed_if_needed()
     if DATA_STORE == "mongodb":
         init_mongodb()
@@ -67,7 +73,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_origin_regex=r"^https?://.*",
+        allow_origin_regex=None if IS_PRODUCTION else r"^https?://.*",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -88,12 +94,17 @@ def create_app() -> FastAPI:
     def health_alias():
         return {"status": "healthy", "service": "cloudsentinel-backend"}
 
-    @app.get("/api/seed", tags=["admin"])
-    @app.post("/api/seed", tags=["admin"])
-    def manual_seed():
-        from backend.data.seed import seed
-        seed()
-        return {"status": "ok", "message": "Demo data seeded successfully"}
+    if DEMO_MODE:
+        from fastapi import Depends
+
+        from backend.auth.auth import require_roles
+
+        @app.post("/api/seed", tags=["admin"])
+        def manual_seed(_admin=Depends(require_roles("admin"))):
+            from backend.data.seed import seed
+
+            seed()
+            return {"status": "ok", "message": "Demo data seeded successfully"}
 
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")

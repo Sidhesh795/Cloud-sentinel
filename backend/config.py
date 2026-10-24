@@ -17,8 +17,23 @@ if load_dotenv is not None:
 DATA_STORE = os.getenv("DATA_STORE", "sqlite").strip().lower() or "sqlite"
 MONGODB_URI = os.getenv("MONGODB_URI", "").strip()
 MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "cloudsentinel").strip() or "cloudsentinel"
-JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("CLOUDSENTINEL_SECRET_KEY", "cloudsentinel-dev-secret-change-me")
-AUTO_SEED = os.getenv("AUTO_SEED", "true").strip().lower() in ("true", "1", "yes")
+def _flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("true", "1", "yes")
+
+
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+IS_PRODUCTION = APP_ENV == "production"
+DEMO_MODE = _flag("DEMO_MODE", not IS_PRODUCTION)
+AUTO_SEED = _flag("AUTO_SEED", DEMO_MODE) and DEMO_MODE
+SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+
+_DEV_SECRET = "cloudsentinel-dev-secret-change-me"
+JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("CLOUDSENTINEL_SECRET_KEY") or _DEV_SECRET
+if IS_PRODUCTION and (JWT_SECRET == _DEV_SECRET or len(JWT_SECRET) < 32):
+    raise RuntimeError("JWT_SECRET must be set to a random value of at least 32 characters when APP_ENV=production")
 
 # Database URL configuration (translates Render's postgres:// to postgresql:// for SQLAlchemy)
 raw_db_url = os.getenv("DATABASE_URL", "").strip()
