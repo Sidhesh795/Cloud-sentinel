@@ -1,0 +1,914 @@
+diff --git a/agent/__init__.py b/agent/__init__.py
+new file mode 100644
+index 0000000..3dc1f76
+--- /dev/null
++++ b/agent/__init__.py
+@@ -0,0 +1 @@
++__version__ = "0.1.0"
+diff --git a/agent/__main__.py b/agent/__main__.py
+new file mode 100644
+index 0000000..32a0102
+--- /dev/null
++++ b/agent/__main__.py
+@@ -0,0 +1,3 @@
++from agent.cli import main
++
++raise SystemExit(main())
+diff --git a/agent/cli.py b/agent/cli.py
+new file mode 100644
+index 0000000..8a06824
+--- /dev/null
++++ b/agent/cli.py
+@@ -0,0 +1,145 @@
++import argparse
++import json
++import logging
++import os
++import platform
++import sys
++import time
++import urllib.error
++import urllib.parse
++import urllib.request
++from pathlib import Path
++
++from agent import __version__
++from agent.collectors import collect
++
++log = logging.getLogger("cloudsentinel.agent")
++
++
++def config_path() -> Path:
++    override = os.getenv("CLOUDSENTINEL_AGENT_CONFIG")
++    if override:
++        return Path(override)
++    base = os.getenv("LOCALAPPDATA") if os.name == "nt" else None
++    return Path(base) / "CloudSentinel" / "agent.json" if base else Path.home() / ".cloudsentinel" / "agent.json"
++
++
++def save_config(data: dict, path: Path | None = None) -> None:
++    path = path or config_path()
++    path.parent.mkdir(parents=True, exist_ok=True)
++    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
++    with os.fdopen(fd, "w", encoding="utf-8") as fh:
++        json.dump(data, fh)
++
++
++def load_config(path: Path | None = None) -> dict:
++    path = path or config_path()
++    if not path.exists():
++        raise SystemExit(f"Not enrolled. Run: python -m agent enroll --server URL --token TOKEN (looked in {path})")
++    return json.loads(path.read_text(encoding="utf-8"))
++
++
++def validate_server(url: str) -> str:
++    parsed = urllib.parse.urlparse(url)
++    local = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
++    if parsed.scheme != "https" and not (parsed.scheme == "http" and local):
++        raise SystemExit("Server URL must use https (http is allowed only for localhost).")
++    return url.rstrip("/")
++
++
++class ApiError(Exception):
++    def __init__(self, status: int, detail: str):
++        super().__init__(f"HTTP {status}: {detail}")
++        self.status = status
++
++
++def post(server: str, path: str, body: dict, secret: str | None = None) -> dict:
++    headers = {"Content-Type": "application/json", "User-Agent": f"cloudsentinel-agent/{__version__}"}
++    if secret:
++        headers["Authorization"] = f"Bearer {secret}"
++    req = urllib.request.Request(f"{server}/api{path}", json.dumps(body).encode(), headers, method="POST")
++    try:
++        with urllib.request.urlopen(req, timeout=15) as resp:
++            return json.loads(resp.read() or b"{}")
++    except urllib.error.HTTPError as exc:
++        raise ApiError(exc.code, exc.read().decode(errors="replace")[:300]) from exc
++    except urllib.error.URLError as exc:
++        raise ApiError(0, str(exc.reason)) from exc
++
++
++def cmd_enroll(args: argparse.Namespace) -> int:
++    server = validate_server(args.server)
++    host = platform.node() or "unknown-host"
++    result = post(
++        server,
++        "/agent/enroll",
++        {
++            "token": args.token,
++            "device_name": args.name or host,
++            "hostname": host,
++            "platform": {"Darwin": "macOS"}.get(platform.system(), platform.system()),
++            "platform_version": platform.platform()[:120],
++            "agent_version": __version__,
++        },
++    )
++    save_config({"server": server, "device_id": result["device_id"], "device_secret": result["device_secret"]})
++    print(f"Enrolled as {result['device_id']}. Credentials saved to {config_path()}")
++    return 0
++
++
++def cmd_once(args: argparse.Namespace) -> int:
++    print(json.dumps(collect(), indent=2))
++    return 0
++
++
++def cmd_run(args: argparse.Namespace) -> int:
++    cfg = load_config()
++    server, secret = cfg["server"], cfg["device_secret"]
++    interval, last_posture, failures, loops = 30, 0.0, 0, 0
++    while True:
++        try:
++            hb = post(server, "/agent/heartbeat", {"agent_version": __version__}, secret)
++            interval = max(10, int(hb.get("next_heartbeat_seconds", 30)))
++            if time.monotonic() - last_posture >= args.posture_interval or last_posture == 0.0:
++                res = post(server, "/agent/posture", collect(), secret)
++                last_posture = time.monotonic()
++                log.info("posture=%s reasons=%s", res.get("posture_status"), res.get("reasons"))
++            failures = 0
++            delay = interval
++        except ApiError as exc:
++            if exc.status == 401:
++                log.error("Credential rejected (revoked or invalid). Re-enroll. Exiting.")
++                return 2
++            failures += 1
++            delay = min(300, interval * 2**min(failures, 4))
++            log.warning("%s; retrying in %ss", exc, delay)
++        loops += 1
++        if args.max_loops and loops >= args.max_loops:
++            return 0
++        time.sleep(delay)
++
++
++def main(argv: list[str] | None = None) -> int:
++    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
++    parser = argparse.ArgumentParser(prog="python -m agent")
++    sub = parser.add_subparsers(dest="command", required=True)
++    e = sub.add_parser("enroll")
++    e.add_argument("--server", required=True)
++    e.add_argument("--token", required=True)
++    e.add_argument("--name")
++    e.set_defaults(func=cmd_enroll)
++    sub.add_parser("once", help="Print collected posture without sending").set_defaults(func=cmd_once)
++    r = sub.add_parser("run")
++    r.add_argument("--posture-interval", type=int, default=300)
++    r.add_argument("--max-loops", type=int, default=0, help=argparse.SUPPRESS)
++    r.set_defaults(func=cmd_run)
++    args = parser.parse_args(argv)
++    try:
++        return args.func(args)
++    except ApiError as exc:
++        print(f"Error: {exc}", file=sys.stderr)
++        return 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/agent/collectors.py b/agent/collectors.py
+new file mode 100644
+index 0000000..7daed95
+--- /dev/null
++++ b/agent/collectors.py
+@@ -0,0 +1,118 @@
++import json
++import platform
++import re
++import shutil
++import subprocess
++from datetime import datetime, timezone
++
++from agent import __version__
++
++_WIN_SCRIPT = r"""
++$r=@{}
++try{$m=Get-MpComputerStatus;$r.av=@{active=[bool]$m.RealTimeProtectionEnabled;name='Microsoft Defender'}}catch{}
++try{$r.fw=@(Get-NetFirewallProfile|ForEach-Object{[bool]$_.Enabled})}catch{}
++try{$h=Get-HotFix|Where-Object{$_.InstalledOn}|Sort-Object InstalledOn -Descending|Select-Object -First 1;if($h){$r.hotfix=$h.InstalledOn.ToUniversalTime().ToString('o')}}catch{}
++try{$v=Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction Stop;$r.bitlocker=[string]$v.ProtectionStatus}catch{}
++$r|ConvertTo-Json -Depth 4 -Compress
++"""
++
++
++def _run(cmd: list[str], timeout: int = 30) -> str | None:
++    try:
++        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
++    except (OSError, subprocess.SubprocessError):
++        return None
++    return out.stdout if out.returncode == 0 else None
++
++
++def patch_state_from_days(days: int | None) -> str | None:
++    if days is None:
++        return None
++    if days <= 45:
++        return "UP_TO_DATE"
++    if days <= 90:
++        return "OUTDATED"
++    return "CRITICAL"
++
++
++def _days_since(iso: str | None) -> int | None:
++    if not iso:
++        return None
++    try:
++        when = datetime.fromisoformat(iso.replace("Z", "+00:00"))
++    except ValueError:
++        return None
++    if when.tzinfo is None:
++        when = when.replace(tzinfo=timezone.utc)
++    return max(0, (datetime.now(timezone.utc) - when).days)
++
++
++def _windows() -> dict:
++    ps = shutil.which("powershell") or shutil.which("pwsh")
++    raw = _run([ps, "-NoProfile", "-NonInteractive", "-Command", _WIN_SCRIPT], 60) if ps else None
++    try:
++        data = json.loads(raw) if raw else {}
++    except json.JSONDecodeError:
++        data = {}
++    fw = data.get("fw")
++    bl = data.get("bitlocker")
++    av = data.get("av") or {}
++    days = _days_since(data.get("hotfix"))
++    return {
++        "firewall_enabled": all(fw) if isinstance(fw, list) and fw else None,
++        "encryption_enabled": (bl.strip().lower() in {"on", "1"}) if bl else None,
++        "security_product_active": av.get("active"),
++        "security_product_name": av.get("name"),
++        "last_update_days": days,
++    }
++
++
++def _macos() -> dict:
++    fv = _run(["fdesetup", "status"])
++    fw = _run(["/usr/libexec/ApplicationFirewall/socketfilterfw", "--getglobalstate"])
++    return {
++        "firewall_enabled": ("enabled" in fw.lower()) if fw else None,
++        "encryption_enabled": ("on" in fv.lower()) if fv else None,
++    }
++
++
++def _linux() -> dict:
++    fw = None
++    ufw = _run(["ufw", "status"])
++    if ufw:
++        fw = "status: active" in ufw.lower()
++    elif shutil.which("systemctl"):
++        state = _run(["systemctl", "is-active", "firewalld"])
++        fw = True if state and state.strip() == "active" else None
++    enc = None
++    lsblk = _run(["lsblk", "-J", "-o", "NAME,TYPE,MOUNTPOINT"])
++    if lsblk:
++        try:
++            enc = True if re.search(r'"type":\s*"crypt"', lsblk) else None
++        except re.error:
++            enc = None
++    return {"firewall_enabled": fw, "encryption_enabled": enc}
++
++
++def collect() -> dict:
++    system = platform.system()
++    signals = {"Windows": _windows, "Darwin": _macos, "Linux": _linux}.get(system, lambda: {})()
++    days = signals.get("last_update_days")
++    unknown = sorted(k for k in ("firewall_enabled", "encryption_enabled", "security_product_active") if signals.get(k) is None)
++    return {
++        "os": {"Darwin": "macOS"}.get(system, system or "Unknown"),
++        "os_version": platform.platform()[:120],
++        "firewall_enabled": signals.get("firewall_enabled"),
++        "encryption_enabled": signals.get("encryption_enabled"),
++        "security_product_active": signals.get("security_product_active"),
++        "security_product_name": signals.get("security_product_name"),
++        "patch_state": patch_state_from_days(days),
++        "last_update_days": days,
++        "screen_lock_enabled": None,
++        "metadata": {
++            "hostname": platform.node(),
++            "agent_version": __version__,
++            "collected_at": datetime.now(timezone.utc).isoformat(),
++            "unknown_signals": unknown,
++        },
++    }
+diff --git a/backend/api/agent.py b/backend/api/agent.py
+new file mode 100644
+index 0000000..f02d222
+--- /dev/null
++++ b/backend/api/agent.py
+@@ -0,0 +1,180 @@
++import hashlib
++import secrets
++import uuid
++from datetime import datetime, timedelta, timezone
++
++from fastapi import APIRouter, Depends, HTTPException, status
++from fastapi.security import HTTPAuthorizationCredentials
++from sqlalchemy.orm import Session
++
++from backend import models
++from backend.api.devices import (
++    HEARTBEAT_SECONDS,
++    _audit_device_event,
++    _fingerprint,
++    apply_heartbeat,
++    apply_posture,
++)
++from backend.auth.auth import bearer_scheme, require_admin_or_security
++from backend.database import get_db
++from backend.schemas import (
++    AgentEnrollRequest,
++    AgentEnrollResponse,
++    DeviceHeartbeatRequest,
++    DeviceHeartbeatResponse,
++    DevicePostureRequest,
++    DevicePostureResponse,
++    EnrollmentTokenRequest,
++    EnrollmentTokenResponse,
++)
++
++router = APIRouter(prefix="/agent", tags=["agent"])
++
++
++def _now() -> datetime:
++    return datetime.now(timezone.utc)
++
++
++def _aware(value: datetime) -> datetime:
++    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
++
++
++def _hash(value: str) -> str:
++    return hashlib.sha256(value.encode("utf-8")).hexdigest()
++
++
++def get_current_device(
++    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
++    db: Session = Depends(get_db),
++) -> models.Device:
++    unauthorized = HTTPException(
++        status_code=status.HTTP_401_UNAUTHORIZED,
++        detail="Invalid device credential",
++        headers={"WWW-Authenticate": "Bearer"},
++    )
++    if credentials is None or not credentials.credentials.startswith("csd_"):
++        raise unauthorized
++    device = db.query(models.Device).filter(models.Device.credential_hash == _hash(credentials.credentials)).first()
++    if device is None or device.status == "REVOKED":
++        raise unauthorized
++    return device
++
++
++@router.post("/enrollment-tokens", response_model=EnrollmentTokenResponse, status_code=status.HTTP_201_CREATED)
++def create_enrollment_token(
++    payload: EnrollmentTokenRequest,
++    db: Session = Depends(get_db),
++    admin: models.User = Depends(require_admin_or_security),
++) -> EnrollmentTokenResponse:
++    target = db.query(models.User).filter(models.User.id == (payload.user_id or admin.id)).first()
++    if target is None or not target.is_active:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
++    if admin.organization_id is not None and target.organization_id != admin.organization_id:
++        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cross-organization enrollment denied")
++    token = "cse_" + secrets.token_urlsafe(32)
++    expires_at = _now() + timedelta(minutes=payload.ttl_minutes)
++    db.add(
++        models.EnrollmentToken(
++            organization_id=target.organization_id,
++            user_id=target.id,
++            created_by_id=admin.id,
++            token_hash=_hash(token),
++            expires_at=expires_at,
++        )
++    )
++    db.commit()
++    return EnrollmentTokenResponse(token=token, expires_at=expires_at, user_id=target.id)
++
++
++@router.post("/enroll", response_model=AgentEnrollResponse, status_code=status.HTTP_201_CREATED)
++def enroll(payload: AgentEnrollRequest, db: Session = Depends(get_db)) -> AgentEnrollResponse:
++    invalid = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid, expired or already used enrollment token")
++    now = _now()
++    token_hash = _hash(payload.token)
++    record = db.query(models.EnrollmentToken).filter(models.EnrollmentToken.token_hash == token_hash).first()
++    if record is None or record.used_at is not None or _aware(record.expires_at) < now:
++        raise invalid
++    consumed = (
++        db.query(models.EnrollmentToken)
++        .filter(models.EnrollmentToken.id == record.id, models.EnrollmentToken.used_at.is_(None))
++        .update({"used_at": now}, synchronize_session=False)
++    )
++    if consumed != 1:
++        db.rollback()
++        raise invalid
++    user = db.query(models.User).filter(models.User.id == record.user_id).first()
++    if user is None or not user.is_active:
++        db.commit()
++        raise invalid
++
++    secret = "csd_" + secrets.token_urlsafe(32)
++    fingerprint = _fingerprint(user.organization_id, user.id, payload.hostname, payload.platform)
++    device = db.query(models.Device).filter(models.Device.device_fingerprint == fingerprint).first()
++    if device is None:
++        device = models.Device(
++            organization_id=user.organization_id,
++            device_id=f"DEV-{uuid.uuid4().hex[:12].upper()}",
++            user_id=user.id,
++            device_name=payload.device_name,
++            hostname=payload.hostname,
++            platform=payload.platform,
++            platform_version=payload.platform_version,
++            device_fingerprint=fingerprint,
++            posture_status="UNKNOWN",
++            registered_at=now,
++            os=payload.platform,
++            os_version=payload.platform_version,
++            trusted_device=True,
++            os_compliant=False,
++            av_active=True,
++            location="Unknown",
++        )
++        db.add(device)
++        db.flush()
++        _audit_device_event(db, device, "DEVICE_REGISTERED", f"{payload.device_name} enrolled via agent.")
++    else:
++        _audit_device_event(db, device, "DEVICE_REENROLLED", f"{device.device_name or device.device_id} re-enrolled; credential rotated.")
++    device.agent_version = payload.agent_version
++    device.status = "ONLINE"
++    device.last_seen = now
++    device.credential_hash = _hash(secret)
++    device.credential_issued_at = now
++    user.device_id = device.device_id
++    db.commit()
++    return AgentEnrollResponse(device_id=device.device_id, device_secret=secret, heartbeat_seconds=HEARTBEAT_SECONDS)
++
++
++@router.post("/heartbeat", response_model=DeviceHeartbeatResponse)
++def agent_heartbeat(
++    payload: DeviceHeartbeatRequest,
++    db: Session = Depends(get_db),
++    device: models.Device = Depends(get_current_device),
++) -> DeviceHeartbeatResponse:
++    return apply_heartbeat(db, device, payload)
++
++
++@router.post("/posture", response_model=DevicePostureResponse)
++def agent_posture(
++    payload: DevicePostureRequest,
++    db: Session = Depends(get_db),
++    device: models.Device = Depends(get_current_device),
++) -> DevicePostureResponse:
++    return apply_posture(db, device, payload)
++
++
++@router.post("/devices/{device_id}/revoke", status_code=status.HTTP_204_NO_CONTENT)
++def revoke_device(
++    device_id: str,
++    db: Session = Depends(get_db),
++    admin: models.User = Depends(require_admin_or_security),
++) -> None:
++    query = db.query(models.Device).filter(models.Device.device_id == device_id)
++    if admin.organization_id is not None:
++        query = query.filter(models.Device.organization_id == admin.organization_id)
++    device = query.first()
++    if device is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
++    device.credential_hash = None
++    device.status = "REVOKED"
++    _audit_device_event(db, device, "DEVICE_REVOKED", f"{device.device_name or device.device_id} revoked by {admin.username}.")
++    db.commit()
+diff --git a/backend/api/devices.py b/backend/api/devices.py
+index d38c083..6e525c7 100644
+--- a/backend/api/devices.py
++++ b/backend/api/devices.py
+@@ -96,6 +96,8 @@ def _derive_posture(payload: DevicePostureRequest) -> tuple[str, list[str]]:
+     reasons: list[str] = []
+     if payload.security_product_active is False:
+         reasons.append("Security product is inactive")
++    if payload.screen_lock_enabled is False:
++        reasons.append("Screen lock is disabled")
+     if payload.firewall_enabled is False:
+         reasons.append("Firewall is disabled")
+     if payload.encryption_enabled is False:
+@@ -228,14 +230,7 @@ def register_device(
+     )
+ 
+ 
+-@router.post("/{device_id}/heartbeat", response_model=DeviceHeartbeatResponse)
+-def heartbeat(
+-    device_id: str,
+-    payload: DeviceHeartbeatRequest,
+-    db: Session = Depends(get_db),
+-    current_user: models.User = Depends(get_current_user),
+-) -> DeviceHeartbeatResponse:
+-    device = _get_device(db, current_user, device_id)
++def apply_heartbeat(db: Session, device: models.Device, payload: DeviceHeartbeatRequest) -> DeviceHeartbeatResponse:
+     now = _server_time()
+     device.last_seen = now
+     device.status = "ONLINE"
+@@ -252,14 +247,17 @@ def heartbeat(
+     )
+ 
+ 
+-@router.post("/{device_id}/posture", response_model=DevicePostureResponse)
+-def submit_posture(
++@router.post("/{device_id}/heartbeat", response_model=DeviceHeartbeatResponse)
++def heartbeat(
+     device_id: str,
+-    payload: DevicePostureRequest,
++    payload: DeviceHeartbeatRequest,
+     db: Session = Depends(get_db),
+     current_user: models.User = Depends(get_current_user),
+-) -> DevicePostureResponse:
+-    device = _get_device(db, current_user, device_id)
++) -> DeviceHeartbeatResponse:
++    return apply_heartbeat(db, _get_device(db, current_user, device_id), payload)
++
++
++def apply_posture(db: Session, device: models.Device, payload: DevicePostureRequest) -> DevicePostureResponse:
+     posture_status, reasons = _derive_posture(payload)
+     now = _server_time()
+     previous = device.posture_status
+@@ -319,3 +317,13 @@ def submit_posture(
+         reasons=reasons,
+         server_time=now,
+     )
++
++
++@router.post("/{device_id}/posture", response_model=DevicePostureResponse)
++def submit_posture(
++    device_id: str,
++    payload: DevicePostureRequest,
++    db: Session = Depends(get_db),
++    current_user: models.User = Depends(get_current_user),
++) -> DevicePostureResponse:
++    return apply_posture(db, _get_device(db, current_user, device_id), payload)
+diff --git a/backend/cli.py b/backend/cli.py
+new file mode 100644
+index 0000000..7d76d11
+--- /dev/null
++++ b/backend/cli.py
+@@ -0,0 +1,62 @@
++import argparse
++import getpass
++import os
++import re
++import sys
++
++from backend import models
++from backend.auth.auth import hash_password
++from backend.config import IS_PRODUCTION
++from backend.database import SessionLocal, init_db
++
++
++def create_admin(args: argparse.Namespace) -> int:
++    password = os.getenv("CS_ADMIN_PASSWORD") or getpass.getpass("Admin password (min 12 chars): ")
++    if len(password) < 12:
++        print("Password must be at least 12 characters.", file=sys.stderr)
++        return 1
++    if not IS_PRODUCTION:
++        init_db()
++    slug = re.sub(r"[^a-z0-9]+", "-", args.org.lower()).strip("-") or "org"
++    with SessionLocal() as db:
++        if db.query(models.User).filter(models.User.username == args.username).first():
++            print("Username already exists.", file=sys.stderr)
++            return 1
++        org = db.query(models.Organization).filter(models.Organization.slug == slug).first()
++        if org is None:
++            org = models.Organization(
++                name=args.org, slug=slug, status="ACTIVE", environment="PRODUCTION" if IS_PRODUCTION else "DEMO"
++            )
++            db.add(org)
++            db.flush()
++        db.add(
++            models.User(
++                organization_id=org.id,
++                username=args.username,
++                password_hash=hash_password(password),
++                display_name=args.display_name or args.username,
++                role="admin",
++                email=args.email,
++                is_active=True,
++            )
++        )
++        db.commit()
++    print(f"Admin '{args.username}' created in organization '{args.org}'.")
++    return 0
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(prog="python -m backend.cli")
++    sub = parser.add_subparsers(dest="command", required=True)
++    c = sub.add_parser("create-admin", help="Create an organization admin (password via prompt or CS_ADMIN_PASSWORD)")
++    c.add_argument("--username", required=True)
++    c.add_argument("--email", required=True)
++    c.add_argument("--org", required=True, help="Organization name")
++    c.add_argument("--display-name")
++    c.set_defaults(func=create_admin)
++    args = parser.parse_args()
++    return args.func(args)
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/backend/database.py b/backend/database.py
+index 6301f87..8d6981e 100644
+--- a/backend/database.py
++++ b/backend/database.py
+@@ -59,6 +59,8 @@ def _ensure_sqlite_v11_columns() -> None:
+             ("registered_at", "DATETIME"),
+             ("ip_context", "JSON"),
+             ("location_context", "JSON"),
++            ("credential_hash", "VARCHAR(64)"),
++            ("credential_issued_at", "DATETIME"),
+         ],
+         "applications": [("organization_id", "INTEGER")],
+         "security_events": [
+diff --git a/backend/main.py b/backend/main.py
+index 883c400..96763b4 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
+ from backend.api import (
+     access,
+     admin,
++    agent,
+     applications,
+     auth,
+     devices,
+@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
+     app.include_router(organization.router, prefix="/api")
+     app.include_router(admin.router, prefix="/api")
+     app.include_router(users.router, prefix="/api")
++    app.include_router(agent.router, prefix="/api")
+     app.include_router(devices.router, prefix="/api")
+     app.include_router(applications.router, prefix="/api")
+     app.include_router(events.router, prefix="/api")
+diff --git a/backend/models.py b/backend/models.py
+index 367d3bd..0ca8fc8 100644
+--- a/backend/models.py
++++ b/backend/models.py
+@@ -78,6 +78,8 @@ class Device(Base):
+     location: Mapped[str] = mapped_column(String(120), nullable=False)
+     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
++    credential_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
++    credential_issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+ 
+     organization: Mapped[Organization | None] = relationship(back_populates="devices")
+     user: Mapped[User] = relationship(back_populates="devices")
+@@ -204,3 +206,16 @@ class SimulationState(Base):
+     state: Mapped[str] = mapped_column(String(32), default="NORMAL", nullable=False)
+     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
++
++
++class EnrollmentToken(Base):
++    __tablename__ = "enrollment_tokens"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
++    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
++    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
++    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
++    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
++    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
++    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
++    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+diff --git a/backend/schemas.py b/backend/schemas.py
+index 3d54f36..7e8f747 100644
+--- a/backend/schemas.py
++++ b/backend/schemas.py
+@@ -127,6 +127,9 @@ class DevicePostureRequest(BaseModel):
+     encryption_enabled: bool | None = None
+     security_product_active: bool | None = None
+     patch_state: str | None = Field(default=None, max_length=40)
++    screen_lock_enabled: bool | None = None
++    security_product_name: str | None = Field(default=None, max_length=80)
++    last_update_days: int | None = Field(default=None, ge=0, le=36500)
+     metadata: dict | None = None
+ 
+ 
+@@ -370,3 +373,29 @@ class MongoHealthResponse(BaseModel):
+     status: str
+     database: str
+     detail: str | None = None
++
++
++class EnrollmentTokenRequest(BaseModel):
++    user_id: int | None = None
++    ttl_minutes: int = Field(default=60, ge=5, le=1440)
++
++
++class EnrollmentTokenResponse(BaseModel):
++    token: str
++    expires_at: datetime
++    user_id: int
++
++
++class AgentEnrollRequest(BaseModel):
++    token: str = Field(min_length=10, max_length=128)
++    device_name: str = Field(min_length=1, max_length=120)
++    hostname: str = Field(min_length=1, max_length=120)
++    platform: str = Field(min_length=1, max_length=64)
++    platform_version: str = Field(min_length=1, max_length=120)
++    agent_version: str = Field(min_length=1, max_length=40)
++
++
++class AgentEnrollResponse(BaseModel):
++    device_id: str
++    device_secret: str
++    heartbeat_seconds: int
+diff --git a/migrations/versions/26b2285ea24f_agent_enrollment_and_device_credentials.py b/migrations/versions/26b2285ea24f_agent_enrollment_and_device_credentials.py
+new file mode 100644
+index 0000000..9a4ee6f
+--- /dev/null
++++ b/migrations/versions/26b2285ea24f_agent_enrollment_and_device_credentials.py
+@@ -0,0 +1,57 @@
++"""agent enrollment and device credentials
++
++Revision ID: 26b2285ea24f
++Revises: b5ab0eeb1303
++Create Date: 2026-10-24 06:38:23.847089
++
++"""
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++
++
++# revision identifiers, used by Alembic.
++revision: str = '26b2285ea24f'
++down_revision: Union[str, Sequence[str], None] = 'b5ab0eeb1303'
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Upgrade schema."""
++    # ### commands auto generated by Alembic - please adjust! ###
++    op.create_table('enrollment_tokens',
++    sa.Column('id', sa.Integer(), nullable=False),
++    sa.Column('organization_id', sa.Integer(), nullable=True),
++    sa.Column('user_id', sa.Integer(), nullable=False),
++    sa.Column('created_by_id', sa.Integer(), nullable=False),
++    sa.Column('token_hash', sa.String(length=64), nullable=False),
++    sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False),
++    sa.Column('used_at', sa.DateTime(timezone=True), nullable=True),
++    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
++    sa.ForeignKeyConstraint(['created_by_id'], ['users.id'], ),
++    sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ),
++    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
++    sa.PrimaryKeyConstraint('id')
++    )
++    op.create_index(op.f('ix_enrollment_tokens_id'), 'enrollment_tokens', ['id'], unique=False)
++    op.create_index(op.f('ix_enrollment_tokens_organization_id'), 'enrollment_tokens', ['organization_id'], unique=False)
++    op.create_index(op.f('ix_enrollment_tokens_token_hash'), 'enrollment_tokens', ['token_hash'], unique=True)
++    op.add_column('devices', sa.Column('credential_hash', sa.String(length=64), nullable=True))
++    op.add_column('devices', sa.Column('credential_issued_at', sa.DateTime(timezone=True), nullable=True))
++    op.create_index(op.f('ix_devices_credential_hash'), 'devices', ['credential_hash'], unique=True)
++    # ### end Alembic commands ###
++
++
++def downgrade() -> None:
++    """Downgrade schema."""
++    # ### commands auto generated by Alembic - please adjust! ###
++    op.drop_index(op.f('ix_devices_credential_hash'), table_name='devices')
++    op.drop_column('devices', 'credential_issued_at')
++    op.drop_column('devices', 'credential_hash')
++    op.drop_index(op.f('ix_enrollment_tokens_token_hash'), table_name='enrollment_tokens')
++    op.drop_index(op.f('ix_enrollment_tokens_organization_id'), table_name='enrollment_tokens')
++    op.drop_index(op.f('ix_enrollment_tokens_id'), table_name='enrollment_tokens')
++    op.drop_table('enrollment_tokens')
++    # ### end Alembic commands ###
+diff --git a/tests/test_agent_api.py b/tests/test_agent_api.py
+new file mode 100644
+index 0000000..655b4ec
+--- /dev/null
++++ b/tests/test_agent_api.py
+@@ -0,0 +1,83 @@
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from backend import models
++from backend.auth.auth import hash_password
++from tests.conftest import TestingSessionLocal
++
++
++@pytest.fixture()
++def admin_headers(client):
++    with TestingSessionLocal() as db:
++        org = db.query(models.Organization).first()
++        db.add(
++            models.User(
++                organization_id=org.id, username="admin_t", password_hash=hash_password("AdminPass12345"),
++                display_name="Admin T", role="admin", email="admin_t@example.com", is_active=True,
++            )
++        )
++        db.commit()
++    token = client.post("/api/auth/login", json={"username": "admin_t", "password": "AdminPass12345"}).json()["access_token"]
++    return {"Authorization": f"Bearer {token}"}
++
++
++def _enroll(client, admin_headers, host="LAPTOP-1"):
++    tok = client.post("/api/agent/enrollment-tokens", json={}, headers=admin_headers).json()["token"]
++    body = {"token": tok, "device_name": host, "hostname": host, "platform": "Windows", "platform_version": "Win11", "agent_version": "0.1.0"}
++    return tok, body, client.post("/api/agent/enroll", json=body)
++
++
++def test_non_admin_cannot_create_token(client):
++    t = client.post("/api/auth/login", json={"username": "developer01", "password": "CloudDemo123!"}).json()["access_token"]
++    assert client.post("/api/agent/enrollment-tokens", json={}, headers={"Authorization": f"Bearer {t}"}).status_code == 403
++
++
++def test_enroll_heartbeat_posture_flow(client, admin_headers):
++    _, _, r = _enroll(client, admin_headers)
++    assert r.status_code == 201
++    dev = {"Authorization": f"Bearer {r.json()['device_secret']}"}
++    assert client.post("/api/agent/heartbeat", json={"agent_version": "0.1.0"}, headers=dev).status_code == 200
++    ok = client.post("/api/agent/posture", headers=dev, json={
++        "os": "Windows", "os_version": "11", "firewall_enabled": True, "encryption_enabled": True,
++        "security_product_active": True, "patch_state": "UP_TO_DATE"})
++    assert ok.json()["posture_status"] == "HEALTHY"
++    bad = client.post("/api/agent/posture", headers=dev, json={
++        "os": "Windows", "os_version": "11", "firewall_enabled": False, "patch_state": "UP_TO_DATE"})
++    assert bad.json()["posture_status"] == "WARNING"
++
++
++def test_enrollment_token_is_single_use(client, admin_headers):
++    _, body, first = _enroll(client, admin_headers)
++    assert first.status_code == 201
++    assert client.post("/api/agent/enroll", json=body).status_code == 401
++
++
++def test_expired_token_rejected(client, admin_headers):
++    tok, body, _ = _enroll(client, admin_headers, "H2")
++    tok2 = client.post("/api/agent/enrollment-tokens", json={}, headers=admin_headers).json()["token"]
++    with TestingSessionLocal() as db:
++        for row in db.query(models.EnrollmentToken).all():
++            row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
++        db.commit()
++    assert client.post("/api/agent/enroll", json={**body, "token": tok2}).status_code == 401
++
++
++def test_invalid_credentials_rejected(client, admin_headers):
++    assert client.post("/api/agent/heartbeat", json={}).status_code == 401
++    assert client.post("/api/agent/heartbeat", json={}, headers={"Authorization": "Bearer csd_nope"}).status_code == 401
++    assert client.post("/api/agent/heartbeat", json={}, headers=admin_headers).status_code == 401
++
++
++def test_revoked_device_loses_access(client, admin_headers):
++    _, _, r = _enroll(client, admin_headers)
++    dev = {"Authorization": f"Bearer {r.json()['device_secret']}"}
++    assert client.post(f"/api/agent/devices/{r.json()['device_id']}/revoke", headers=admin_headers).status_code == 204
++    assert client.post("/api/agent/heartbeat", json={}, headers=dev).status_code == 401
++
++
++def test_reenroll_rotates_secret_same_device(client, admin_headers):
++    _, _, a = _enroll(client, admin_headers)
++    _, _, b = _enroll(client, admin_headers)
++    assert a.json()["device_id"] == b.json()["device_id"]
++    assert client.post("/api/agent/heartbeat", json={}, headers={"Authorization": f"Bearer {a.json()['device_secret']}"}).status_code == 401
+diff --git a/tests/test_agent_collectors.py b/tests/test_agent_collectors.py
+new file mode 100644
+index 0000000..f1ca97c
+--- /dev/null
++++ b/tests/test_agent_collectors.py
+@@ -0,0 +1,38 @@
++import pytest
++
++from agent import cli, collectors
++
++
++@pytest.mark.parametrize("days,state", [(None, None), (10, "UP_TO_DATE"), (60, "OUTDATED"), (200, "CRITICAL")])
++def test_patch_state(days, state):
++    assert collectors.patch_state_from_days(days) == state
++
++
++def test_collect_marks_unknown_as_none(monkeypatch):
++    monkeypatch.setattr(collectors.platform, "system", lambda: "Linux")
++    monkeypatch.setattr(collectors, "_run", lambda *a, **k: None)
++    monkeypatch.setattr(collectors.shutil, "which", lambda *_: None)
++    data = collectors.collect()
++    assert data["firewall_enabled"] is None and data["encryption_enabled"] is None
++    assert "firewall_enabled" in data["metadata"]["unknown_signals"]
++
++
++def test_windows_parsing(monkeypatch):
++    raw = '{"av":{"active":true,"name":"Microsoft Defender"},"fw":[true,true,false],"bitlocker":"On"}'
++    monkeypatch.setattr(collectors, "_run", lambda *a, **k: raw)
++    monkeypatch.setattr(collectors.shutil, "which", lambda *_: "powershell")
++    out = collectors._windows()
++    assert out["firewall_enabled"] is False and out["encryption_enabled"] is True and out["security_product_active"] is True
++
++
++def test_server_url_must_be_https():
++    assert cli.validate_server("https://x.example.com/") == "https://x.example.com"
++    assert cli.validate_server("http://localhost:8000") == "http://localhost:8000"
++    with pytest.raises(SystemExit):
++        cli.validate_server("http://evil.example.com")
++
++
++def test_config_roundtrip(tmp_path):
++    p = tmp_path / "a.json"
++    cli.save_config({"server": "s", "device_id": "d", "device_secret": "x"}, p)
++    assert cli.load_config(p)["device_id"] == "d"

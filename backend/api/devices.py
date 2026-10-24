@@ -96,6 +96,8 @@ def _derive_posture(payload: DevicePostureRequest) -> tuple[str, list[str]]:
     reasons: list[str] = []
     if payload.security_product_active is False:
         reasons.append("Security product is inactive")
+    if payload.screen_lock_enabled is False:
+        reasons.append("Screen lock is disabled")
     if payload.firewall_enabled is False:
         reasons.append("Firewall is disabled")
     if payload.encryption_enabled is False:
@@ -228,14 +230,7 @@ def register_device(
     )
 
 
-@router.post("/{device_id}/heartbeat", response_model=DeviceHeartbeatResponse)
-def heartbeat(
-    device_id: str,
-    payload: DeviceHeartbeatRequest,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-) -> DeviceHeartbeatResponse:
-    device = _get_device(db, current_user, device_id)
+def apply_heartbeat(db: Session, device: models.Device, payload: DeviceHeartbeatRequest) -> DeviceHeartbeatResponse:
     now = _server_time()
     device.last_seen = now
     device.status = "ONLINE"
@@ -252,14 +247,17 @@ def heartbeat(
     )
 
 
-@router.post("/{device_id}/posture", response_model=DevicePostureResponse)
-def submit_posture(
+@router.post("/{device_id}/heartbeat", response_model=DeviceHeartbeatResponse)
+def heartbeat(
     device_id: str,
-    payload: DevicePostureRequest,
+    payload: DeviceHeartbeatRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
-) -> DevicePostureResponse:
-    device = _get_device(db, current_user, device_id)
+) -> DeviceHeartbeatResponse:
+    return apply_heartbeat(db, _get_device(db, current_user, device_id), payload)
+
+
+def apply_posture(db: Session, device: models.Device, payload: DevicePostureRequest) -> DevicePostureResponse:
     posture_status, reasons = _derive_posture(payload)
     now = _server_time()
     previous = device.posture_status
@@ -319,3 +317,13 @@ def submit_posture(
         reasons=reasons,
         server_time=now,
     )
+
+
+@router.post("/{device_id}/posture", response_model=DevicePostureResponse)
+def submit_posture(
+    device_id: str,
+    payload: DevicePostureRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> DevicePostureResponse:
+    return apply_posture(db, _get_device(db, current_user, device_id), payload)

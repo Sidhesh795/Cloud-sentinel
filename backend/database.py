@@ -59,6 +59,8 @@ def _ensure_sqlite_v11_columns() -> None:
             ("registered_at", "DATETIME"),
             ("ip_context", "JSON"),
             ("location_context", "JSON"),
+            ("credential_hash", "VARCHAR(64)"),
+            ("credential_issued_at", "DATETIME"),
         ],
         "applications": [("organization_id", "INTEGER")],
         "security_events": [

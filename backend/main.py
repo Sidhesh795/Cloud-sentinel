@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.api import (
     access,
     admin,
+    agent,
     applications,
     auth,
     devices,
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(organization.router, prefix="/api")
     app.include_router(admin.router, prefix="/api")
     app.include_router(users.router, prefix="/api")
+    app.include_router(agent.router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(applications.router, prefix="/api")
     app.include_router(events.router, prefix="/api")

@@ -1,0 +1,856 @@
+diff --git a/.env.example b/.env.example
+index 6700339..f53b8fc 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,9 +1,18 @@
+-DATA_STORE=sqlite
+-MONGODB_URI=
+-MONGODB_DATABASE=cloudsentinel
++# development | production
++APP_ENV=development
++# Demo login/seed endpoints. Defaults to true in development, false in production.
++DEMO_MODE=true
++AUTO_SEED=true
++# REQUIRED in production: 32+ random chars. Generate: python -c "import secrets;print(secrets.token_urlsafe(48))"
+ JWT_SECRET=
++# Postgres in production, e.g. postgresql://user:pass@host:5432/cloudsentinel (empty = local SQLite)
+ DATABASE_URL=
++# Optional error tracking
++SENTRY_DSN=
+ PORT=8000
+ HOST=0.0.0.0
+ ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+-AUTO_SEED=true
++# Deprecated, MongoDB path will be removed
++DATA_STORE=sqlite
++MONGODB_URI=
++MONGODB_DATABASE=cloudsentinel
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..ac3091e
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,31 @@
++name: CI
++on:
++  push:
++    branches: [main]
++  pull_request:
++jobs:
++  backend:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.12"
++          cache: pip
++      - run: pip install -r requirements.txt
++      - run: python -m pytest -q
++      - run: DATABASE_URL=sqlite:///./ci.db alembic upgrade head && DATABASE_URL=sqlite:///./ci.db alembic check
++  frontend:
++    runs-on: ubuntu-latest
++    defaults:
++      run:
++        working-directory: frontend
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: 20
++          cache: npm
++          cache-dependency-path: frontend/package-lock.json
++      - run: npm ci
++      - run: npm run build
+diff --git a/Procfile b/Procfile
+index 0a0a6fc..719506a 100644
+--- a/Procfile
++++ b/Procfile
+@@ -1 +1,2 @@
++release: alembic upgrade head
+ web: uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}
+diff --git a/alembic.ini b/alembic.ini
+new file mode 100644
+index 0000000..abb1db9
+--- /dev/null
++++ b/alembic.ini
+@@ -0,0 +1,149 @@
++# A generic, single database configuration.
++
++[alembic]
++# path to migration scripts.
++# this is typically a path given in POSIX (e.g. forward slashes)
++# format, relative to the token %(here)s which refers to the location of this
++# ini file
++script_location = %(here)s/migrations
++
++# template used to generate migration file names; The default value is %%(rev)s_%%(slug)s
++# Uncomment the line below if you want the files to be prepended with date and time
++# see https://alembic.sqlalchemy.org/en/latest/tutorial.html#editing-the-ini-file
++# for all available tokens
++# file_template = %%(year)d_%%(month).2d_%%(day).2d_%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s
++# Or organize into date-based subdirectories (requires recursive_version_locations = true)
++# file_template = %%(year)d/%%(month).2d/%%(day).2d_%%(hour).2d%%(minute).2d_%%(second).2d_%%(rev)s_%%(slug)s
++
++# sys.path path, will be prepended to sys.path if present.
++# defaults to the current working directory.  for multiple paths, the path separator
++# is defined by "path_separator" below.
++prepend_sys_path = .
++
++
++# timezone to use when rendering the date within the migration file
++# as well as the filename.
++# If specified, requires the tzdata library which can be installed by adding
++# `alembic[tz]` to the pip requirements.
++# string value is passed to ZoneInfo()
++# leave blank for localtime
++# timezone =
++
++# max length of characters to apply to the "slug" field
++# truncate_slug_length = 40
++
++# set to 'true' to run the environment during
++# the 'revision' command, regardless of autogenerate
++# revision_environment = false
++
++# set to 'true' to allow .pyc and .pyo files without
++# a source .py file to be detected as revisions in the
++# versions/ directory
++# sourceless = false
++
++# version location specification; This defaults
++# to <script_location>/versions.  When using multiple version
++# directories, initial revisions must be specified with --version-path.
++# The path separator used here should be the separator specified by "path_separator"
++# below.
++# version_locations = %(here)s/bar:%(here)s/bat:%(here)s/alembic/versions
++
++# path_separator; This indicates what character is used to split lists of file
++# paths, including version_locations and prepend_sys_path within configparser
++# files such as alembic.ini.
++# The default rendered in new alembic.ini files is "os", which uses os.pathsep
++# to provide os-dependent path splitting.
++#
++# Note that in order to support legacy alembic.ini files, this default does NOT
++# take place if path_separator is not present in alembic.ini.  If this
++# option is omitted entirely, fallback logic is as follows:
++#
++# 1. Parsing of the version_locations option falls back to using the legacy
++#    "version_path_separator" key, which if absent then falls back to the legacy
++#    behavior of splitting on spaces and/or commas.
++# 2. Parsing of the prepend_sys_path option falls back to the legacy
++#    behavior of splitting on spaces, commas, or colons.
++#
++# Valid values for path_separator are:
++#
++# path_separator = :
++# path_separator = ;
++# path_separator = space
++# path_separator = newline
++#
++# Use os.pathsep. Default configuration used for new projects.
++path_separator = os
++
++# set to 'true' to search source files recursively
++# in each "version_locations" directory
++# new in Alembic version 1.10
++# recursive_version_locations = false
++
++# the output encoding used when revision files
++# are written from script.py.mako
++# output_encoding = utf-8
++
++# database URL.  This is consumed by the user-maintained env.py script only.
++# other means of configuring database URLs may be customized within the env.py
++# file.
++sqlalchemy.url =
++
++
++[post_write_hooks]
++# post_write_hooks defines scripts or Python functions that are run
++# on newly generated revision scripts.  See the documentation for further
++# detail and examples
++
++# format using "black" - use the console_scripts runner, against the "black" entrypoint
++# hooks = black
++# black.type = console_scripts
++# black.entrypoint = black
++# black.options = -l 79 REVISION_SCRIPT_FILENAME
++
++# lint with attempts to fix using "ruff" - use the module runner, against the "ruff" module
++# hooks = ruff
++# ruff.type = module
++# ruff.module = ruff
++# ruff.options = check --fix REVISION_SCRIPT_FILENAME
++
++# Alternatively, use the exec runner to execute a binary found on your PATH
++# hooks = ruff
++# ruff.type = exec
++# ruff.executable = ruff
++# ruff.options = check --fix REVISION_SCRIPT_FILENAME
++
++# Logging configuration.  This is also consumed by the user-maintained
++# env.py script only.
++[loggers]
++keys = root,sqlalchemy,alembic
++
++[handlers]
++keys = console
++
++[formatters]
++keys = generic
++
++[logger_root]
++level = WARNING
++handlers = console
++qualname =
++
++[logger_sqlalchemy]
++level = WARNING
++handlers =
++qualname = sqlalchemy.engine
++
++[logger_alembic]
++level = INFO
++handlers =
++qualname = alembic
++
++[handler_console]
++class = StreamHandler
++args = (sys.stderr,)
++level = NOTSET
++formatter = generic
++
++[formatter_generic]
++format = %(levelname)-5.5s [%(name)s] %(message)s
++datefmt = %H:%M:%S
+diff --git a/backend/auth/auth.py b/backend/auth/auth.py
+index 08e87ee..b8a116b 100644
+--- a/backend/auth/auth.py
++++ b/backend/auth/auth.py
+@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+ from sqlalchemy.orm import Session
+ 
+ from backend import models
+-from backend.config import JWT_SECRET
++from backend.config import DEMO_MODE, JWT_SECRET
+ from backend.database import get_db
+ 
+ 
+@@ -41,7 +41,7 @@ def authenticate_user(db: Session, username: str, password: str) -> models.User
+         .filter(models.User.username.ilike(clean_username))
+         .first()
+     )
+-    if not user:
++    if not user and DEMO_MODE:
+         from backend.data.seed import (
+             DEMO_PASSWORD,
+             USERS,
+@@ -68,18 +68,6 @@ def authenticate_user(db: Session, username: str, password: str) -> models.User
+     if not user:
+         return None
+ 
+-    if clean_username.lower() in {"developer01", "admin01", "employee01", "analyst01"}:
+-        from backend.data.seed import DEMO_PASSWORD
+-
+-        if password == DEMO_PASSWORD:
+-            if not user.is_active or getattr(user, "status", "ACTIVE") != "ACTIVE" or not verify_password(password, user.password_hash):
+-                user.password_hash = hash_password(DEMO_PASSWORD)
+-                user.status = "ACTIVE"
+-                user.is_active = True
+-                db.commit()
+-                db.refresh(user)
+-            return user
+-
+     if not user.is_active or getattr(user, "status", "ACTIVE") != "ACTIVE":
+         return None
+     if not verify_password(password, user.password_hash):
+diff --git a/backend/config.py b/backend/config.py
+index 11b642b..85d8db1 100644
+--- a/backend/config.py
++++ b/backend/config.py
+@@ -17,8 +17,23 @@ if load_dotenv is not None:
+ DATA_STORE = os.getenv("DATA_STORE", "sqlite").strip().lower() or "sqlite"
+ MONGODB_URI = os.getenv("MONGODB_URI", "").strip()
+ MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "cloudsentinel").strip() or "cloudsentinel"
+-JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("CLOUDSENTINEL_SECRET_KEY", "cloudsentinel-dev-secret-change-me")
+-AUTO_SEED = os.getenv("AUTO_SEED", "true").strip().lower() in ("true", "1", "yes")
++def _flag(name: str, default: bool) -> bool:
++    raw = os.getenv(name)
++    if raw is None:
++        return default
++    return raw.strip().lower() in ("true", "1", "yes")
++
++
++APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
++IS_PRODUCTION = APP_ENV == "production"
++DEMO_MODE = _flag("DEMO_MODE", not IS_PRODUCTION)
++AUTO_SEED = _flag("AUTO_SEED", DEMO_MODE) and DEMO_MODE
++SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
++
++_DEV_SECRET = "cloudsentinel-dev-secret-change-me"
++JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("CLOUDSENTINEL_SECRET_KEY") or _DEV_SECRET
++if IS_PRODUCTION and (JWT_SECRET == _DEV_SECRET or len(JWT_SECRET) < 32):
++    raise RuntimeError("JWT_SECRET must be set to a random value of at least 32 characters when APP_ENV=production")
+ 
+ # Database URL configuration (translates Render's postgres:// to postgresql:// for SQLAlchemy)
+ raw_db_url = os.getenv("DATABASE_URL", "").strip()
+diff --git a/backend/main.py b/backend/main.py
+index 0578ea8..883c400 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -19,12 +19,17 @@ from backend.api import (
+     telemetry,
+     users,
+ )
+-from backend.config import AUTO_SEED, DATA_STORE, get_allowed_origins
++from backend.config import APP_ENV, AUTO_SEED, DATA_STORE, DEMO_MODE, IS_PRODUCTION, SENTRY_DSN, get_allowed_origins
+ from backend.database import init_db
+ from backend.db.mongodb import close_mongodb, init_mongodb
+ 
+ logger = logging.getLogger("uvicorn.error")
+ 
++if SENTRY_DSN:
++    import sentry_sdk
++
++    sentry_sdk.init(dsn=SENTRY_DSN, environment=APP_ENV, traces_sample_rate=0.1, send_default_pii=False)
++
+ 
+ def _auto_seed_if_needed() -> None:
+     if not AUTO_SEED:
+@@ -47,7 +52,8 @@ def _auto_seed_if_needed() -> None:
+ 
+ @asynccontextmanager
+ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+-    init_db()
++    if not IS_PRODUCTION:
++        init_db()  # production schema is managed by Alembic: `alembic upgrade head`
+     _auto_seed_if_needed()
+     if DATA_STORE == "mongodb":
+         init_mongodb()
+@@ -67,7 +73,7 @@ def create_app() -> FastAPI:
+     app.add_middleware(
+         CORSMiddleware,
+         allow_origins=origins,
+-        allow_origin_regex=r"^https?://.*",
++        allow_origin_regex=None if IS_PRODUCTION else r"^https?://.*",
+         allow_credentials=True,
+         allow_methods=["*"],
+         allow_headers=["*"],
+@@ -88,12 +94,17 @@ def create_app() -> FastAPI:
+     def health_alias():
+         return {"status": "healthy", "service": "cloudsentinel-backend"}
+ 
+-    @app.get("/api/seed", tags=["admin"])
+-    @app.post("/api/seed", tags=["admin"])
+-    def manual_seed():
+-        from backend.data.seed import seed
+-        seed()
+-        return {"status": "ok", "message": "Demo data seeded successfully"}
++    if DEMO_MODE:
++        from fastapi import Depends
++
++        from backend.auth.auth import require_roles
++
++        @app.post("/api/seed", tags=["admin"])
++        def manual_seed(_admin=Depends(require_roles("admin"))):
++            from backend.data.seed import seed
++
++            seed()
++            return {"status": "ok", "message": "Demo data seeded successfully"}
+ 
+     app.include_router(health.router, prefix="/api")
+     app.include_router(auth.router, prefix="/api")
+diff --git a/migrations/README b/migrations/README
+new file mode 100644
+index 0000000..98e4f9c
+--- /dev/null
++++ b/migrations/README
+@@ -0,0 +1 @@
++Generic single-database configuration.
+\ No newline at end of file
+diff --git a/migrations/env.py b/migrations/env.py
+new file mode 100644
+index 0000000..460a7ee
+--- /dev/null
++++ b/migrations/env.py
+@@ -0,0 +1,83 @@
++from logging.config import fileConfig
++
++from sqlalchemy import engine_from_config
++from sqlalchemy import pool
++
++from alembic import context
++
++# this is the Alembic Config object, which provides
++# access to the values within the .ini file in use.
++config = context.config
++
++# Interpret the config file for Python logging.
++# This line sets up loggers basically.
++if config.config_file_name is not None:
++    fileConfig(config.config_file_name)
++
++# add your model's MetaData object here
++# for 'autogenerate' support
++# from myapp import mymodel
++# target_metadata = mymodel.Base.metadata
++from backend import models  # noqa: F401
++from backend.config import DATABASE_URL
++from backend.database import Base
++
++config.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
++target_metadata = Base.metadata
++
++# other values from the config, defined by the needs of env.py,
++# can be acquired:
++# my_important_option = config.get_main_option("my_important_option")
++# ... etc.
++
++
++def run_migrations_offline() -> None:
++    """Run migrations in 'offline' mode.
++
++    This configures the context with just a URL
++    and not an Engine, though an Engine is acceptable
++    here as well.  By skipping the Engine creation
++    we don't even need a DBAPI to be available.
++
++    Calls to context.execute() here emit the given string to the
++    script output.
++
++    """
++    url = config.get_main_option("sqlalchemy.url")
++    context.configure(
++        url=url,
++        target_metadata=target_metadata,
++        literal_binds=True,
++        dialect_opts={"paramstyle": "named"},
++    )
++
++    with context.begin_transaction():
++        context.run_migrations()
++
++
++def run_migrations_online() -> None:
++    """Run migrations in 'online' mode.
++
++    In this scenario we need to create an Engine
++    and associate a connection with the context.
++
++    """
++    connectable = engine_from_config(
++        config.get_section(config.config_ini_section, {}),
++        prefix="sqlalchemy.",
++        poolclass=pool.NullPool,
++    )
++
++    with connectable.connect() as connection:
++        context.configure(
++            connection=connection, target_metadata=target_metadata
++        )
++
++        with context.begin_transaction():
++            context.run_migrations()
++
++
++if context.is_offline_mode():
++    run_migrations_offline()
++else:
++    run_migrations_online()
+diff --git a/migrations/script.py.mako b/migrations/script.py.mako
+new file mode 100644
+index 0000000..1101630
+--- /dev/null
++++ b/migrations/script.py.mako
+@@ -0,0 +1,28 @@
++"""${message}
++
++Revision ID: ${up_revision}
++Revises: ${down_revision | comma,n}
++Create Date: ${create_date}
++
++"""
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++${imports if imports else ""}
++
++# revision identifiers, used by Alembic.
++revision: str = ${repr(up_revision)}
++down_revision: Union[str, Sequence[str], None] = ${repr(down_revision)}
++branch_labels: Union[str, Sequence[str], None] = ${repr(branch_labels)}
++depends_on: Union[str, Sequence[str], None] = ${repr(depends_on)}
++
++
++def upgrade() -> None:
++    """Upgrade schema."""
++    ${upgrades if upgrades else "pass"}
++
++
++def downgrade() -> None:
++    """Downgrade schema."""
++    ${downgrades if downgrades else "pass"}
+diff --git a/migrations/versions/b5ab0eeb1303_baseline.py b/migrations/versions/b5ab0eeb1303_baseline.py
+new file mode 100644
+index 0000000..0228c42
+--- /dev/null
++++ b/migrations/versions/b5ab0eeb1303_baseline.py
+@@ -0,0 +1,265 @@
++"""baseline
++
++Revision ID: b5ab0eeb1303
++Revises: 
++Create Date: 2026-10-24 06:21:05.617665
++
++"""
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++
++
++# revision identifiers, used by Alembic.
++revision: str = 'b5ab0eeb1303'
++down_revision: Union[str, Sequence[str], None] = None
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Upgrade schema."""
++    # ### commands auto generated by Alembic - please adjust! ###
++    op.create_table('organizations',
++    sa.Column('id', sa.Integer(), nullable=False),
++    sa.Column('name', sa.String(length=120), nullable=False),
++    sa.Column('slug', sa.String(length=80), nullable=False),
++    sa.Column('status', sa.String(length=24), nullable=False),
++    sa.Column('environment', sa.String(length=24), nullable=False),
++    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
++    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
++    sa.PrimaryKeyConstraint('id')
++    )
++    op.create_index(op.f('ix_organizations_id'), 'organizations', ['id'], unique=False)
++    op.create_index(op.f('ix_organizations_slug'), 'organizations', ['slug'], unique=True)
++    op.create_table('applications',
++    sa.Column('id', sa.Integer(), nullable=False),
++    sa.Column('organization_id', sa.Integer(), nullable=True),
++    sa.Column('name', sa.String(length=120), nullable=False),
++    sa.Column('description', sa.Text(), nullable=False),
++    sa.Column('cloud_provider', sa.String(length=16), nullable=False),
++    sa.Column('category', sa.String(length=64), nullable=False),
++    sa.Column('sensitivity', sa.Integer(), nullable=False),
++    sa.Column('is_active', sa.Boolean(), nullable=False),
++    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
++    sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ),
++    sa.PrimaryKeyConstraint('id')
++    )
++    op.create_index(op.f('ix_applications_cloud_provider'), 'applications', ['cloud_provider'], unique=False)
++    op.create_index(op.f('ix_applications_id'), 'applications', ['id'], unique=False)
++    op.create_index(op.f('ix_applications_name'), 'applications', ['name'], unique=True)
++    op.create_index(op.f('ix_applications_organization_id'), 'applications', ['organization_id'], unique=False)
++    op.create_table('users',
++    sa.Column('id', sa.Integer(), nullable=False),
++    sa.Column('organization_id', sa.Integer(), nullable=True),
++    sa.Column('username', sa.String(length=64), nullable=False),
++    sa.Column('password_hash', sa.String(length=255), nullable=False),
++    sa.Column('display_name', sa.String(length=120), nullable=False),
++    sa.Column('role', sa.String(length=32), nullable=False),
++    sa.Column('email', sa.String(length=255), nullable=False),
++    sa.Column('device_id', sa.String(length=64), nullable=True),
++    sa.Column('status', sa.String(length=24), nullable=False),
++    sa.Column('is_active', sa.Boolean(), nullable=False),
++    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
++    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
++    sa.Column('last_login', sa.DateTime(timezone=True), nullable=True),
++    sa.Column('last_seen', sa.DateTime(timezone=True), nullable=True),
++    sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ),
++    sa.PrimaryKeyConstraint('id'),
++    sa.UniqueConstraint('email')
++    )
++    op.create_index(op.f('ix_users_id'), 'users', ['id'], unique=False)
++    op.create_index(op.f('ix_users_organization_id'), 'users', ['organization_id'], unique=False)
++    op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
++    op.create_table('access_requests',
++    sa.Column('id', sa.Integer(), nullable=False),
++    sa.Column('organization_id', sa.Integer(), nullable=True),
++    sa.Column('user_id', sa.Integer(), nullable=False),
++    sa.Column('application_id', sa.Integer(), nullable=False),
++    sa.Column('action', sa.String(length=64), nullable=False),
++    sa.Column('risk_score', sa.Integer(), nullable=False),
++    sa.Column('decision', sa.String(length=32), nullable=False),
++    sa.Column('reason', sa.Text(), nullable=False),
++    sa.Column('timestamp', sa.DateTime(timezone=True), nullable=False),
++    sa.ForeignKeyConstraint(['application_id'], ['applications.id'], ),
++    sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ),
++    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
++    sa.PrimaryKeyConstraint('id')
++    )
++    op.create_index(op.f('ix_access_requests_id'), 'access_requests', ['id'], unique=False)
++    op.create_index(op.f('ix_access_requests_organization_id'), 'access_requests', ['organization_id'], unique=False)
++    op.create_index(op.f('ix_access_requests_timestamp'), 'access_requests', ['timestamp'], unique=False)
++    op.create_table('devices',
++    sa.Column('id', sa.Integer(), nullable=False),
++    sa.Column('organization_id', sa.Integer(), nullable=True),
++    sa.Column('device_id', sa.String(length=64), nullable=False),
++    sa.Column('user_id', sa.Integer(), nullable=False),
++    sa.Column('device_name', sa.String(length=120), nullable=True),
++    sa.Column('hostname', sa.String(length=120), nullable=True),
++    sa.Column('platform', sa.String(length=64), nullable=True),
++    sa.Column('platform_version', sa.String(length=120), nullable=True),
++    sa.Column('agent_version', sa.String(length=40), nullable=True),
++    sa.Column('device_fingerprint', sa.String(length=128), nullable=True),
++    sa.Column('status', sa.String(length=24), nullable=False),
++    sa.Column('posture_status', sa.String(length=24), nullable=False),
++    sa.Column('registered_at', sa.DateTime(timezone=True), nullable=False),
++    sa.Column('ip_context', sa.JSON(), nullable=True),
++    sa.Column('location_context', sa.JSON(), nullable=True),
++    sa.Column('os', sa.String(length=64), nullable=False),
++    sa.Column('os_version', sa.String(length=64), nullable=False),
++    sa.Column('trusted_device', sa.Boolean(), nullable=False),
++    sa.Column('os_compliant', sa.Boolean(), nullable=False),
++    sa.Column('av_active', sa.Boolean(), nullable=False),
++    sa.Column('location', sa.String(length=120), nullable=False),
++    sa.Column('last_seen', sa.DateTime(timezone=True), nullable=False),
++    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
++    sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ),
++    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
++    sa.PrimaryKeyConstraint('id'),
++    sa.UniqueConstraint('device_fingerprint')
++    )
++    op.create_index(op.f('ix_devices_device_id'), 'devices', ['device_id'], unique=True)
++    op.create_index(op.f('ix_devices_id'), 'devices', ['id'], unique=False)
++    op.create_index(op.f('ix_devices_organization_id'), 'devices', ['organization_id'], unique=False)
++    op.create_table('risk_scores',
++    sa.Column('id', sa.Integer(), nullable=False),
++    sa.Column('organization_id', sa.Integer(), nullable=True),
++    sa.Column('user_id', sa.Integer(), nullable=False),
++    sa.Column('risk_score', sa.Integer(), nullable=False),
++    sa.Column('risk_level', sa.String(length=16), nullable=False),
++    sa.Column('identity_risk', sa.Integer(), nullable=False),
++    sa.Column('posture_risk', sa.Integer(), nullable=False),
++    sa.Column('behavior_risk', sa.Integer(), nullable=False),
++    sa.Column('context_risk', sa.Integer(), nullable=False),
++    sa.Column('resource_risk', sa.Integer(), nullable=False),
++    sa.Column('timestamp', sa.DateTime(timezone=True), nullable=False),
++    sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ),
++    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
++    sa.PrimaryKeyConstraint('id')
++    )
++    op.create_index(op.f('ix_risk_scores_id'), 'risk_scores', ['id'], unique=False)
++    op.create_index(op.f('ix_risk_scores_organization_id'), 'risk_scores', ['organization_id'], unique=False)
++    op.create_index(op.f('ix_risk_scores_timestamp'), 'risk_scores', ['timestamp'], unique=False)
++    op.create_table('simulation_states',
++    sa.Column('id', sa.Integer(), nullable=False),
++    sa.Column('user_id', sa.Integer(), nullable=False),
++    sa.Column('simulation_active', sa.Boolean(), nullable=False),
++    sa.Column('state', sa.String(length=32), nullable=False),
++    sa.Column('started_at', sa.DateTime(timezone=True), nullable=True),
++    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
++    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
++    sa.PrimaryKeyConstraint('id'),
++    sa.UniqueConstraint('user_id')
++    )
++    op.create_index(op.f('ix_simulation_states_id'), 'simulation_states', ['id'], unique=False)
++    op.create_table('security_events',
++    sa.Column('id', sa.Integer(), nullable=False),
++    sa.Column('organization_id', sa.Integer(), nullable=True),
++    sa.Column('user_id', sa.Integer(), nullable=True),
++    sa.Column('device_id', sa.Integer(), nullable=True),
++    sa.Column('event_type', sa.String(length=80), nullable=False),
++    sa.Column('severity', sa.String(length=16), nullable=False),
++    sa.Column('source', sa.String(length=32), nullable=False),
++    sa.Column('description', sa.Text(), nullable=False),
++    sa.Column('metadata', sa.JSON(), nullable=True),
++    sa.Column('timestamp', sa.DateTime(timezone=True), nullable=False),
++    sa.ForeignKeyConstraint(['device_id'], ['devices.id'], ),
++    sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ),
++    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
++    sa.PrimaryKeyConstraint('id')
++    )
++    op.create_index(op.f('ix_security_events_event_type'), 'security_events', ['event_type'], unique=False)
++    op.create_index(op.f('ix_security_events_id'), 'security_events', ['id'], unique=False)
++    op.create_index(op.f('ix_security_events_organization_id'), 'security_events', ['organization_id'], unique=False)
++    op.create_index(op.f('ix_security_events_severity'), 'security_events', ['severity'], unique=False)
++    op.create_index(op.f('ix_security_events_timestamp'), 'security_events', ['timestamp'], unique=False)
++    op.create_table('security_tags',
++    sa.Column('id', sa.Integer(), nullable=False),
++    sa.Column('organization_id', sa.Integer(), nullable=True),
++    sa.Column('user_id', sa.Integer(), nullable=False),
++    sa.Column('device_id', sa.Integer(), nullable=True),
++    sa.Column('tag', sa.String(length=80), nullable=False),
++    sa.Column('severity', sa.String(length=16), nullable=False),
++    sa.Column('source', sa.String(length=64), nullable=False),
++    sa.Column('is_active', sa.Boolean(), nullable=False),
++    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
++    sa.ForeignKeyConstraint(['device_id'], ['devices.id'], ),
++    sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ),
++    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
++    sa.PrimaryKeyConstraint('id')
++    )
++    op.create_index(op.f('ix_security_tags_id'), 'security_tags', ['id'], unique=False)
++    op.create_index(op.f('ix_security_tags_organization_id'), 'security_tags', ['organization_id'], unique=False)
++    op.create_index(op.f('ix_security_tags_tag'), 'security_tags', ['tag'], unique=False)
++    op.create_table('telemetry',
++    sa.Column('id', sa.Integer(), nullable=False),
++    sa.Column('organization_id', sa.Integer(), nullable=True),
++    sa.Column('user_id', sa.Integer(), nullable=False),
++    sa.Column('device_id', sa.Integer(), nullable=True),
++    sa.Column('requests_per_minute', sa.Integer(), nullable=False),
++    sa.Column('data_download_mb', sa.Float(), nullable=False),
++    sa.Column('failed_logins', sa.Integer(), nullable=False),
++    sa.Column('unique_applications', sa.Integer(), nullable=False),
++    sa.Column('access_frequency', sa.Integer(), nullable=False),
++    sa.Column('login_hour', sa.Integer(), nullable=False),
++    sa.Column('location', sa.String(length=120), nullable=False),
++    sa.Column('event_type', sa.String(length=80), nullable=False),
++    sa.Column('source', sa.String(length=32), nullable=False),
++    sa.Column('metadata', sa.JSON(), nullable=True),
++    sa.Column('timestamp', sa.DateTime(timezone=True), nullable=False),
++    sa.ForeignKeyConstraint(['device_id'], ['devices.id'], ),
++    sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ),
++    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
++    sa.PrimaryKeyConstraint('id')
++    )
++    op.create_index(op.f('ix_telemetry_id'), 'telemetry', ['id'], unique=False)
++    op.create_index(op.f('ix_telemetry_organization_id'), 'telemetry', ['organization_id'], unique=False)
++    op.create_index(op.f('ix_telemetry_timestamp'), 'telemetry', ['timestamp'], unique=False)
++    # ### end Alembic commands ###
++
++
++def downgrade() -> None:
++    """Downgrade schema."""
++    # ### commands auto generated by Alembic - please adjust! ###
++    op.drop_index(op.f('ix_telemetry_timestamp'), table_name='telemetry')
++    op.drop_index(op.f('ix_telemetry_organization_id'), table_name='telemetry')
++    op.drop_index(op.f('ix_telemetry_id'), table_name='telemetry')
++    op.drop_table('telemetry')
++    op.drop_index(op.f('ix_security_tags_tag'), table_name='security_tags')
++    op.drop_index(op.f('ix_security_tags_organization_id'), table_name='security_tags')
++    op.drop_index(op.f('ix_security_tags_id'), table_name='security_tags')
++    op.drop_table('security_tags')
++    op.drop_index(op.f('ix_security_events_timestamp'), table_name='security_events')
++    op.drop_index(op.f('ix_security_events_severity'), table_name='security_events')
++    op.drop_index(op.f('ix_security_events_organization_id'), table_name='security_events')
++    op.drop_index(op.f('ix_security_events_id'), table_name='security_events')
++    op.drop_index(op.f('ix_security_events_event_type'), table_name='security_events')
++    op.drop_table('security_events')
++    op.drop_index(op.f('ix_simulation_states_id'), table_name='simulation_states')
++    op.drop_table('simulation_states')
++    op.drop_index(op.f('ix_risk_scores_timestamp'), table_name='risk_scores')
++    op.drop_index(op.f('ix_risk_scores_organization_id'), table_name='risk_scores')
++    op.drop_index(op.f('ix_risk_scores_id'), table_name='risk_scores')
++    op.drop_table('risk_scores')
++    op.drop_index(op.f('ix_devices_organization_id'), table_name='devices')
++    op.drop_index(op.f('ix_devices_id'), table_name='devices')
++    op.drop_index(op.f('ix_devices_device_id'), table_name='devices')
++    op.drop_table('devices')
++    op.drop_index(op.f('ix_access_requests_timestamp'), table_name='access_requests')
++    op.drop_index(op.f('ix_access_requests_organization_id'), table_name='access_requests')
++    op.drop_index(op.f('ix_access_requests_id'), table_name='access_requests')
++    op.drop_table('access_requests')
++    op.drop_index(op.f('ix_users_username'), table_name='users')
++    op.drop_index(op.f('ix_users_organization_id'), table_name='users')
++    op.drop_index(op.f('ix_users_id'), table_name='users')
++    op.drop_table('users')
++    op.drop_index(op.f('ix_applications_organization_id'), table_name='applications')
++    op.drop_index(op.f('ix_applications_name'), table_name='applications')
++    op.drop_index(op.f('ix_applications_id'), table_name='applications')
++    op.drop_index(op.f('ix_applications_cloud_provider'), table_name='applications')
++    op.drop_table('applications')
++    op.drop_index(op.f('ix_organizations_slug'), table_name='organizations')
++    op.drop_index(op.f('ix_organizations_id'), table_name='organizations')
++    op.drop_table('organizations')
++    # ### end Alembic commands ###
+diff --git a/render.yaml b/render.yaml
+index b7069be..8652f41 100644
+--- a/render.yaml
++++ b/render.yaml
+@@ -1,3 +1,8 @@
++databases:
++  - name: cloudsentinel-db
++    plan: free
++    region: oregon
++
+ services:
+   - type: web
+     name: cloudsentinel-backend
+@@ -5,16 +10,23 @@ services:
+     plan: free
+     region: oregon
+     buildCommand: pip install -r requirements.txt
++    preDeployCommand: alembic upgrade head
+     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}
+     healthCheckPath: /health
+     envVars:
+       - key: PYTHON_VERSION
+         value: 3.12.4
+-      - key: DATA_STORE
+-        value: sqlite
+-      - key: AUTO_SEED
+-        value: "true"
++      - key: APP_ENV
++        value: production
++      - key: DEMO_MODE
++        value: "false"
++      - key: DATABASE_URL
++        fromDatabase:
++          name: cloudsentinel-db
++          property: connectionString
+       - key: JWT_SECRET
+         generateValue: true
++      - key: SENTRY_DSN
++        sync: false
+       - key: ALLOWED_ORIGINS
+-        value: "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000"
++        sync: false
+diff --git a/requirements.txt b/requirements.txt
+index 518fcfb..91a256d 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -10,3 +10,6 @@ httpx==0.28.1
+ scikit-learn==1.7.1
+ pymongo==4.14.0
+ python-dotenv==1.1.1
++alembic==1.16.4
++psycopg[binary]==3.2.9
++sentry-sdk[fastapi]==2.34.1
+diff --git a/tests/test_phase0_security.py b/tests/test_phase0_security.py
+new file mode 100644
+index 0000000..0ad65dd
+--- /dev/null
++++ b/tests/test_phase0_security.py
+@@ -0,0 +1,32 @@
++import importlib
++
++import pytest
++
++from backend import config
++
++
++def test_demo_login_blocked_when_demo_mode_off(client, monkeypatch):
++    from backend.auth import auth
++
++    monkeypatch.setattr(auth, "DEMO_MODE", False)
++    r = client.post("/api/auth/login", json={"username": "admin01", "password": "CloudDemo123!"})
++    assert r.status_code == 401
++
++
++def test_wrong_password_rejected_for_existing_demo_user(client):
++    r = client.post("/api/auth/login", json={"username": "developer01", "password": "wrong"})
++    assert r.status_code == 401
++
++
++def test_seed_endpoint_requires_admin(client):
++    assert client.post("/api/seed").status_code in (401, 403, 404)
++
++
++def test_production_requires_strong_jwt_secret(monkeypatch):
++    monkeypatch.setenv("APP_ENV", "production")
++    monkeypatch.delenv("JWT_SECRET", raising=False)
++    monkeypatch.delenv("CLOUDSENTINEL_SECRET_KEY", raising=False)
++    with pytest.raises(RuntimeError):
++        importlib.reload(config)
++    monkeypatch.setenv("APP_ENV", "development")
++    importlib.reload(config)

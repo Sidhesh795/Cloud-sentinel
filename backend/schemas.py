@@ -127,6 +127,9 @@ class DevicePostureRequest(BaseModel):
     encryption_enabled: bool | None = None
     security_product_active: bool | None = None
     patch_state: str | None = Field(default=None, max_length=40)
+    screen_lock_enabled: bool | None = None
+    security_product_name: str | None = Field(default=None, max_length=80)
+    last_update_days: int | None = Field(default=None, ge=0, le=36500)
     metadata: dict | None = None
 
 
@@ -370,3 +373,29 @@ class MongoHealthResponse(BaseModel):
     status: str
     database: str
     detail: str | None = None
+
+
+class EnrollmentTokenRequest(BaseModel):
+    user_id: int | None = None
+    ttl_minutes: int = Field(default=60, ge=5, le=1440)
+
+
+class EnrollmentTokenResponse(BaseModel):
+    token: str
+    expires_at: datetime
+    user_id: int
+
+
+class AgentEnrollRequest(BaseModel):
+    token: str = Field(min_length=10, max_length=128)
+    device_name: str = Field(min_length=1, max_length=120)
+    hostname: str = Field(min_length=1, max_length=120)
+    platform: str = Field(min_length=1, max_length=64)
+    platform_version: str = Field(min_length=1, max_length=120)
+    agent_version: str = Field(min_length=1, max_length=40)
+
+
+class AgentEnrollResponse(BaseModel):
+    device_id: str
+    device_secret: str
+    heartbeat_seconds: int
