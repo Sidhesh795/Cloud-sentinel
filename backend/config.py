@@ -43,8 +43,9 @@ if IS_PRODUCTION and (JWT_SECRET == _DEV_SECRET or len(JWT_SECRET) < 32):
 
 # Database URL configuration (translates Render's postgres:// to postgresql:// for SQLAlchemy)
 raw_db_url = os.getenv("DATABASE_URL", "").strip()
-if raw_db_url.startswith("postgres://"):
-    DATABASE_URL = raw_db_url.replace("postgres://", "postgresql://", 1)
+if raw_db_url.startswith(("postgres://", "postgresql://")):
+    # requirements ship psycopg v3, so force that driver (bare postgresql:// would load psycopg2)
+    DATABASE_URL = "postgresql+psycopg://" + raw_db_url.split("://", 1)[1]
 elif raw_db_url:
     DATABASE_URL = raw_db_url
 elif os.getenv("VERCEL"):
