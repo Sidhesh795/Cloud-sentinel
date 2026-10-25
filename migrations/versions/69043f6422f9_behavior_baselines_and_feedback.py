@@ -49,7 +49,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_anomaly_feedback_id'), 'anomaly_feedback', ['id'], unique=False)
     op.create_index(op.f('ix_anomaly_feedback_organization_id'), 'anomaly_feedback', ['organization_id'], unique=False)
-    op.add_column('telemetry', sa.Column('anomaly_flag', sa.Boolean(), server_default=sa.text('0'), nullable=False))
+    op.add_column('telemetry', sa.Column('anomaly_flag', sa.Boolean(), server_default=sa.false(), nullable=False))
     # ### end Alembic commands ###
 
 
