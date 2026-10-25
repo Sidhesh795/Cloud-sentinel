@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, selectinload
 
 from backend import models
+from backend.auth.auth import get_current_user, get_scoped_user, is_privileged
 from backend.database import get_db
 from backend.schemas import UserBase, UserPostureRead
 from backend.security.anomaly import assess_behavior
@@ -13,28 +14,42 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 @router.get("", response_model=list[UserBase])
-def list_users(db: Session = Depends(get_db)) -> list[models.User]:
-    return db.query(models.User).order_by(models.User.username).all()
+def list_users(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> list[models.User]:
+    if not is_privileged(current_user):
+        return [current_user]
+    return (
+        db.query(models.User)
+        .filter(models.User.organization_id == current_user.organization_id)
+        .order_by(models.User.username)
+        .all()
+    )
 
 
 @router.get("/{user_id}", response_model=UserBase)
-def get_user(user_id: int, db: Session = Depends(get_db)) -> models.User:
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return user
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> models.User:
+    return get_scoped_user(db, current_user, user_id)
 
 
 @router.get("/{user_id}/posture", response_model=UserPostureRead)
-def get_user_posture(user_id: int, db: Session = Depends(get_db)) -> UserPostureRead:
+def get_user_posture(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> UserPostureRead:
+    get_scoped_user(db, current_user, user_id)
     user = (
         db.query(models.User)
         .options(selectinload(models.User.devices), selectinload(models.User.security_tags))
         .filter(models.User.id == user_id)
         .first()
     )
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     device = user.devices[0] if user.devices else None
     latest_telemetry = max(user.telemetry, key=lambda item: item.timestamp) if user.telemetry else None
     anomaly = assess_behavior(latest_telemetry) if latest_telemetry else None

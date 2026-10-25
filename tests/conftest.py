@@ -99,6 +99,9 @@ def client():
 
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as test_client:
+        test_client.anon = TestClient(app)
+        login = test_client.post("/api/auth/login", json={"username": "developer01", "password": "CloudDemo123!"})
+        test_client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
         yield test_client
     app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)

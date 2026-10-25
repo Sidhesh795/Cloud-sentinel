@@ -153,3 +153,24 @@ def require_admin_or_security(
             detail="Administrator or security analyst role required",
         )
     return current_user
+
+
+PRIVILEGED_ROLES = {"ADMIN", "SECURITY_ANALYST", "ANALYST"}
+
+
+def is_privileged(user: models.User) -> bool:
+    return normalize_role(user.role) in PRIVILEGED_ROLES
+
+
+def get_scoped_user(db: Session, current_user: models.User, user_id: int) -> models.User:
+    """Target user visible to current_user: self, or same-org user for privileged roles. 404 otherwise."""
+    if user_id == current_user.id:
+        return current_user
+    target = db.query(models.User).filter(models.User.id == user_id).first()
+    if (
+        target is None
+        or not is_privileged(current_user)
+        or target.organization_id != current_user.organization_id
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return target

@@ -34,7 +34,7 @@ def test_login_invalid_credentials(client):
 
 
 def test_me_without_token(client):
-    response = client.get("/api/auth/me")
+    response = client.anon.get("/api/auth/me")
     assert response.status_code == 401
 
 
@@ -237,7 +237,7 @@ def _app_id_by_name(client, name):
 def test_access_check_requires_authentication(client):
     user_id = client.get("/api/users").json()[0]["id"]
     _submit_normal_telemetry(client, user_id)
-    response = client.post(
+    response = client.anon.post(
         "/api/access/check",
         json={"user_id": user_id, "application_id": _app_id_by_name(client, "Email"), "action": "READ"},
     )

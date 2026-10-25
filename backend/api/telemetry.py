@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from backend import models
 from backend.config import using_mongodb
+from backend.auth.auth import get_current_user, get_scoped_user
 from backend.database import get_db
 from backend.db.repositories.telemetry import TelemetryRepository
 from backend.schemas import TelemetryCreate, TelemetryRead
@@ -12,10 +13,12 @@ router = APIRouter(tags=["telemetry"])
 
 
 @router.post("/telemetry", response_model=TelemetryRead, status_code=status.HTTP_201_CREATED)
-def create_telemetry(payload: TelemetryCreate, db: Session = Depends(get_db)) -> models.Telemetry:
-    user = db.query(models.User).filter(models.User.id == payload.user_id).first()
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+def create_telemetry(
+    payload: TelemetryCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> models.Telemetry:
+    user = get_scoped_user(db, current_user, payload.user_id)
 
     if (payload.source or "").upper() == "LIVE":
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="source LIVE is reserved")
@@ -65,10 +68,9 @@ def list_user_telemetry(
     user_id: int,
     limit: int = 20,
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
 ) -> list[TelemetryRead]:
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    get_scoped_user(db, current_user, user_id)
     telemetry = (
         db.query(models.Telemetry)
         .filter(models.Telemetry.user_id == user_id)

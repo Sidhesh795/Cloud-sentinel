@@ -171,7 +171,7 @@ def test_simulation_is_self_only_and_user_isolated(client):
         )
         assert status.status_code == 200
         assert status.json()["state"] == "NORMAL"
-        risk = client.get(f"/api/users/{account['user']['id']}/risk").json()
+        risk = client.get(f"/api/users/{account['user']['id']}/risk", headers=headers(account["access_token"])).json()
         assert risk["risk_level"] == "LOW"
 
     reset = reset_user(client, admin["access_token"], admin["user"]["id"])

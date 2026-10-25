@@ -37,7 +37,7 @@ def test_unknown_host_denied(client):
 
 
 def test_no_auth_is_401(client):
-    assert client.get("/api/enforce/verify", headers=H).status_code == 401
+    assert client.anon.get("/api/enforce/verify", headers=H).status_code == 401
 
 
 def test_healthy_user_low_sensitivity_allowed(client):

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, selectinload
 
 from backend import models
+from backend.auth.auth import get_current_user, get_scoped_user
 from backend.database import get_db
 from backend.schemas import RiskAssessmentRead, RiskScoreRead, SecurityTagSummary
 from backend.security.anomaly import assess_behavior
@@ -36,7 +37,12 @@ def _latest_telemetry(user: models.User):
 
 
 @router.get("/{user_id}/risk", response_model=RiskAssessmentRead)
-def get_user_risk(user_id: int, db: Session = Depends(get_db)) -> RiskAssessmentRead:
+def get_user_risk(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> RiskAssessmentRead:
+    get_scoped_user(db, current_user, user_id)
     user = _load_user(db, user_id)
     device = user.devices[0] if user.devices else None
     telemetry = _latest_telemetry(user)
@@ -91,10 +97,9 @@ def get_user_risk_history(
     user_id: int,
     limit: int = 20,
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
 ) -> list[models.RiskScore]:
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    get_scoped_user(db, current_user, user_id)
     return (
         db.query(models.RiskScore)
         .filter(models.RiskScore.user_id == user_id)

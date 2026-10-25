@@ -148,11 +148,11 @@ def test_device_registration_heartbeat_posture_and_storage(client):
     assert devices.status_code == 200
     assert device_id in {item["device_id"] for item in devices.json()}
 
-    events = client.get("/api/events")
+    events = client.get("/api/events", headers=headers)
     event_types = {item["event_type"] for item in events.json()}
     assert "DEVICE_REGISTERED" in event_types
     assert "DEVICE_ONLINE" in event_types
 
-    telemetry = client.get(f"/api/users/{user_id}/telemetry")
+    telemetry = client.get(f"/api/users/{user_id}/telemetry", headers=headers)
     assert telemetry.status_code == 200
     assert telemetry.json()[0]["source"] in {"AGENT", "SIMULATION"}
