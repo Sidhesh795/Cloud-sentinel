@@ -72,6 +72,7 @@ def _ensure_sqlite_v11_columns() -> None:
             ("event_type", "VARCHAR(80) DEFAULT 'APPLICATION_ACTIVITY' NOT NULL"),
             ("source", "VARCHAR(32) DEFAULT 'SIMULATION' NOT NULL"),
             ("metadata", "JSON"),
+            ("anomaly_flag", "BOOLEAN DEFAULT 0 NOT NULL"),
         ],
         "risk_scores": [("organization_id", "INTEGER")],
         "access_requests": [("organization_id", "INTEGER")],

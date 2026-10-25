@@ -37,6 +37,7 @@ class AnomalyAssessment:
     anomaly_score: float
     behavior_risk: int
     reason: str
+    explanations: tuple = ()
 
 
 def telemetry_to_features(telemetry) -> list[float]:

@@ -17,6 +17,8 @@ def create_telemetry(payload: TelemetryCreate, db: Session = Depends(get_db)) ->
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    if (payload.source or "").upper() == "LIVE":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="source LIVE is reserved")
     device = (
         db.query(models.Device)
         .filter(models.Device.device_id == payload.device_id, models.Device.user_id == user.id)

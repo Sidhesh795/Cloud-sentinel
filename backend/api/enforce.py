@@ -17,6 +17,7 @@ from backend.auth.auth import (
     username_from_token,
 )
 from backend.database import get_db
+from backend.security.behavior import record_hit, record_login
 from backend.security.zero_trust_gateway import evaluate_access, primary_device
 
 router = APIRouter(prefix="/enforce", tags=["enforcement"])
@@ -87,12 +88,14 @@ def verify(request: Request, db: Session = Depends(get_db)) -> Response:
             return _reply(403, "DENY", problem)
 
     action = _action(request)
+    record_hit(user.id, app.id)
     key = (user.id, app.id, action)
     hit = _cache.get(key)
     if hit and time.monotonic() - hit[0] < config.ENFORCE_CACHE_SECONDS:
         return Response(status_code=hit[1], headers=hit[2])
     try:
-        d = evaluate_access(db, user_id=user.id, application_id=app.id, action=action, persist=True).policy
+        gd = evaluate_access(db, user_id=user.id, application_id=app.id, action=action, persist=True, live=config.LIVE_BEHAVIOR)
+        d = gd.policy
     except HTTPException as exc:
         logger.warning("enforce evaluation failed: %s", exc.detail)
         return _reply(403, "DENY", "Access could not be evaluated")
@@ -104,7 +107,7 @@ def verify(request: Request, db: Session = Depends(get_db)) -> Response:
     response = _reply(
         200 if allowed else 403,
         d.decision,
-        d.reason,
+        d.reason + ((" | " + "; ".join(gd.risk.reasons[:3])) if not allowed and gd.risk.reasons else ""),
         **({"X-CloudSentinel-User": user.username, "X-CloudSentinel-Risk": str(d.risk_score)} if allowed else {}),
     )
     _cache[key] = (time.monotonic(), response.status_code, dict(response.headers))
@@ -170,8 +173,9 @@ def login_page(next: str = "") -> HTMLResponse:
 
 
 @router.post("/login", include_in_schema=False)
-def login_submit(username: str = Form(...), password: str = Form(...), next: str = Form(""), db: Session = Depends(get_db)):
+def login_submit(request: Request, username: str = Form(...), password: str = Form(...), next: str = Form(""), db: Session = Depends(get_db)):
     user = authenticate_user(db, username, password)
+    record_login(db, username, user, request.client.host if request.client else None)
     if user is None:
         return HTMLResponse(_FORM.format(msg="<p style=color:#b00>Invalid credentials</p>", nxt=html.escape(next, quote=True)), status_code=401)
     destination = _safe_next(db, next) if next else None

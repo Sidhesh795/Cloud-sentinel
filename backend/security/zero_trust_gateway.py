@@ -59,10 +59,15 @@ def _latest_telemetry(user: models.User):
     return max(user.telemetry, key=lambda item: item.timestamp)
 
 
-def assess_current_context(db: Session, user_id: int) -> tuple[models.User, models.Device | None, RiskAssessment, list[models.SecurityTag]]:
+def assess_current_context(db: Session, user_id: int, live: bool = False) -> tuple[models.User, models.Device | None, RiskAssessment, list[models.SecurityTag]]:
     user = _load_user(db, user_id)
     device = primary_device(user)
     telemetry = _latest_telemetry(user)
+    anomaly = None
+    if live:
+        from backend.security.behavior import live_context
+
+        telemetry, anomaly = live_context(db, user, device)
     if telemetry is None and DEMO_MODE:
         from backend.data.seed import upsert_baseline_telemetry, upsert_device
 
@@ -80,7 +85,7 @@ def assess_current_context(db: Session, user_id: int) -> tuple[models.User, mode
             detail="No telemetry available for access evaluation",
         )
 
-    anomaly = assess_behavior(telemetry)
+    anomaly = anomaly or assess_behavior(telemetry)
     posture = evaluate_posture(user, device, anomaly)
     tags = persist_active_tags(db, user.id, device.id if device else None, posture.tags)
     risk = calculate_risk(user, device, telemetry, posture, anomaly)
@@ -109,9 +114,10 @@ def evaluate_access(
     application_id: int,
     action: str,
     persist: bool = True,
+    live: bool = False,
 ) -> GatewayDecision:
     application = _load_application(db, application_id)
-    user, device, risk, tags = assess_current_context(db, user_id)
+    user, device, risk, tags = assess_current_context(db, user_id, live=live)
     policy = evaluate_policy(
         user=user,
         risk=risk,
@@ -122,7 +128,7 @@ def evaluate_access(
     )
 
     if persist:
-        _record_access_decision(db, user, application, action.upper(), policy)
+        _record_access_decision(db, user, application, action.upper(), policy, risk.reasons)
         db.commit()
 
     return GatewayDecision(
@@ -171,6 +177,7 @@ def _record_access_decision(
     application: models.Application,
     action: str,
     policy: PolicyDecision,
+    reasons: list[str] | None = None,
 ) -> None:
     db.add(
         models.AccessRequest(
@@ -200,6 +207,7 @@ def _record_access_decision(
                 "risk_score": policy.risk_score,
                 "risk_level": policy.risk_level,
                 "policy_rule": policy.policy_rule,
+                "reasons": (reasons or [])[:5],
             },
         )
     )
