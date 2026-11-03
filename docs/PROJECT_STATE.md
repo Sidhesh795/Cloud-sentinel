@@ -9,6 +9,7 @@ Stack: FastAPI + SQLAlchemy + Alembic (Postgres in prod, SQLite in dev), React/V
 - Phase 2: `/api/enforce/verify` forward-auth (nginx auth_request), session cookie + login page, host->app mapping, device gate, tenant checks, `deploy/` nginx+compose.
 - Phase 4 (in progress): legacy endpoints (/api/users/*, /api/events, /api/applications, /api/telemetry) now require auth and are tenant-scoped; non-privileged users see only themselves (cross-user/cross-org -> 404). Helpers: `get_scoped_user`, `is_privileged` in backend/auth/auth.py. Tests: `client` fixture is logged in as developer01; use `client.anon` for unauthenticated calls.
 - Phase 5 (TOTP MFA): stdlib RFC 6238 TOTP (backend/security/mfa.py), secrets Fernet-encrypted at rest (`MFA_ENCRYPTION_KEY`, else derived from JWT_SECRET: set it in prod, rotating JWT_SECRET otherwise breaks enrolled MFA), 8 single-use recovery codes, replay protection, lockout (5 fails -> 5 min). Login for MFA users returns `mfa_required`+`mfa_token` (aud=mfa, 5 min, not an API token) -> POST /api/auth/mfa/verify. Endpoints: /api/mfa/{status,setup,enable,disable,recovery-codes,stepup}. Tokens/cookies carry `mfa_at`; /api/enforce/verify treats MFA_REQUIRED as satisfied when mfa_at is within `MFA_VALID_MINUTES` (60) and user has MFA enabled; otherwise 403 + `X-CloudSentinel-MFA: stepup|enroll`; nginx redirects MFA_REQUIRED to /api/enforce/stepup. Enforce HTML login supports the code step. /api/health now returns `demo_mode`; login page hides demo profiles/password unless demo. Frontend: MFA step on login, Account Security page (manual key entry, no QR yet). Env: MFA_ISSUER, MFA_VALID_MINUTES, MFA_MAX_ATTEMPTS, MFA_LOCK_SECONDS, MFA_ENCRYPTION_KEY. Migration d7922282ae1c verified on Postgres 16 (upgrade/downgrade/check). Not done: QR code, WebAuthn, org policy 'require MFA', rate limiting (task 3).
+- Phase 6 (rate limiting): in-process sliding window (backend/security/ratelimit.py). Per-IP: login (JSON + enforce form) 20/min, MFA (login step, /api/mfa/*, enforce login/mfa+stepup) 20/min, agent enroll 10/min; per-username: 10 failed logins/5 min (failures only, successes never lock); /api/enforce/verify 600/min per user (429 + Retry-After, fails closed). Env: RATE_LIMIT_ENABLED, TRUSTED_PROXY_HOPS (Render=1; uses Nth-from-last X-Forwarded-For, spoof-safe; 0 = socket IP), RL_LOGIN_PER_MIN, RL_MFA_PER_MIN, RL_ENROLL_PER_MIN, RL_VERIFY_PER_MIN, LOGIN_USER_FAILS, LOGIN_USER_WINDOW. Per-worker memory; move to Redis when scaling out. No migration.
 - Phase 3: per-user robust baselines from LIVE snapshots (`backend/security/behavior.py`), explainable deviations, false-positive/confirmed feedback, metrics (`/api/intelligence/*`), login-attempt tracking. Active when `LIVE_BEHAVIOR=true` (default off in demo mode).
 
 ## Key env vars
@@ -17,7 +18,7 @@ APP_ENV, DEMO_MODE, JWT_SECRET, DATABASE_URL, ALLOWED_ORIGINS, COOKIE_DOMAIN, RE
 ## Known gaps (priority order)
 1. (Done in phase 4) Legacy endpoints authenticated + tenant-scoped. Remaining: applications with NULL organization_id are a shared catalog visible to all tenants; frontend not yet verified against non-admin views.
 2. MFA is not implemented: `MFA_REQUIRED` is treated as blocked. Add TOTP/WebAuthn step-up.
-3. No rate limiting (login, enroll, verify).
+3. (Done in phase 6) Rate limiting; Redis backend still TODO for multi-worker.
 4. Live behavior state (request hits) is in-process memory; use Redis for multi-worker. Data-volume feature is always 0 (proxy doesn't measure bytes).
 5. MongoDB path is deprecated but still wired in; remove.
 6. Browser sessions are not bound to a specific device (verify uses user's most recent device).
@@ -26,5 +27,5 @@ APP_ENV, DEMO_MODE, JWT_SECRET, DATABASE_URL, ALLOWED_ORIGINS, COOKIE_DOMAIN, RE
 9. Frontend pages for enrollment, baselines/feedback, host mapping.
 
 ## Dev
-`python -m pytest` (83 tests) | `python -m alembic upgrade head` | `python -m uvicorn backend.main:app` | agent: `python -m agent enroll|once|run`
+`python -m pytest` (120 tests) | `python -m alembic upgrade head` | `python -m uvicorn backend.main:app` | agent: `python -m agent enroll|once|run`
 Windows PowerShell 5: no `&&`; use `python -m <tool>`.

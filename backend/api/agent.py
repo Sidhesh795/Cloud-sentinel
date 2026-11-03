@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from backend import models
+from backend import config, models
 from backend.api.devices import (
     HEARTBEAT_SECONDS,
     _audit_device_event,
@@ -17,6 +17,7 @@ from backend.api.devices import (
 )
 from backend.auth.auth import bearer_scheme, require_admin_or_security
 from backend.database import get_db
+from backend.security.ratelimit import ip_limit
 from backend.schemas import (
     AgentEnrollRequest,
     AgentEnrollResponse,
@@ -86,7 +87,7 @@ def create_enrollment_token(
     return EnrollmentTokenResponse(token=token, expires_at=expires_at, user_id=target.id)
 
 
-@router.post("/enroll", response_model=AgentEnrollResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/enroll", response_model=AgentEnrollResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(ip_limit("enroll", "RL_ENROLL_PER_MIN"))])
 def enroll(payload: AgentEnrollRequest, db: Session = Depends(get_db)) -> AgentEnrollResponse:
     invalid = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid, expired or already used enrollment token")
     now = _now()

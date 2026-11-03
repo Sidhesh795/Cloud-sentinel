@@ -39,6 +39,14 @@ MFA_VALID_MINUTES = int(os.getenv("MFA_VALID_MINUTES", "60"))  # how long a TOTP
 MFA_MAX_ATTEMPTS = int(os.getenv("MFA_MAX_ATTEMPTS", "5"))
 MFA_LOCK_SECONDS = int(os.getenv("MFA_LOCK_SECONDS", "300"))
 MFA_ENCRYPTION_KEY = os.getenv("MFA_ENCRYPTION_KEY", "")  # recommended in prod; falls back to a key derived from JWT_SECRET
+RATE_LIMIT_ENABLED = _flag("RATE_LIMIT_ENABLED", True)
+TRUSTED_PROXY_HOPS = int(os.getenv("TRUSTED_PROXY_HOPS", "0"))  # Render/Heroku-style single proxy: 1
+RL_LOGIN_PER_MIN = int(os.getenv("RL_LOGIN_PER_MIN", "20"))  # per IP
+RL_MFA_PER_MIN = int(os.getenv("RL_MFA_PER_MIN", "20"))  # per IP, login MFA step + /api/mfa/*
+RL_ENROLL_PER_MIN = int(os.getenv("RL_ENROLL_PER_MIN", "10"))  # per IP
+RL_VERIFY_PER_MIN = int(os.getenv("RL_VERIFY_PER_MIN", "600"))  # per user, forward-auth
+LOGIN_USER_FAILS = int(os.getenv("LOGIN_USER_FAILS", "10"))  # failed logins per username
+LOGIN_USER_WINDOW = int(os.getenv("LOGIN_USER_WINDOW", "300"))
 COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
 
 _DEV_SECRET = "cloudsentinel-dev-secret-change-me"

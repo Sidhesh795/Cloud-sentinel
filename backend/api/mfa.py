@@ -4,12 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from backend import models
+from backend import config, models
 from backend.auth.auth import authenticate_user, create_access_token, get_current_user
 from backend.database import get_db
 from backend.security import mfa
+from backend.security.ratelimit import ip_limit
 
-router = APIRouter(prefix="/mfa", tags=["mfa"])
+router = APIRouter(prefix="/mfa", tags=["mfa"], dependencies=[Depends(ip_limit("mfa", "RL_MFA_PER_MIN"))])
 
 
 class CodeBody(BaseModel):

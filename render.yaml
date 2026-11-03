@@ -26,6 +26,8 @@ services:
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
       - key: SENTRY_DSN
         sync: false
       - key: ALLOWED_ORIGINS

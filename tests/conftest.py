@@ -7,6 +7,7 @@ from backend import models
 from backend.auth.auth import hash_password
 from backend.database import Base, get_db
 from backend.main import app
+from backend.security.ratelimit import limiter
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -21,6 +22,7 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 
 @pytest.fixture()
 def client():
+    limiter.reset()
     Base.metadata.create_all(bind=engine)
     db = TestingSessionLocal()
     try:

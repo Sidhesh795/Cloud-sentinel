@@ -22,6 +22,7 @@ from backend.auth.auth import (
 from backend.database import get_db
 from backend.security import mfa
 from backend.security.behavior import record_hit, record_login
+from backend.security.ratelimit import ip_limit, limiter, username_blocked, username_failed
 from backend.security.zero_trust_gateway import evaluate_access, primary_device
 
 router = APIRouter(prefix="/enforce", tags=["enforcement"])
@@ -91,6 +92,9 @@ def verify(request: Request, db: Session = Depends(get_db)) -> Response:
         if problem:
             return _reply(403, "DENY", problem)
 
+    if wait := limiter.retry_after(f"verify:user:{user.id}", config.RL_VERIFY_PER_MIN, 60):
+        return _reply(429, "RATE_LIMITED", "Too many requests", **{"Retry-After": str(wait)})
+    limiter.hit(f"verify:user:{user.id}", 60)
     action = _action(request)
     record_hit(user.id, app.id)
     mfa_ok = bool(user.mfa_enabled and mfa_at_from_token(token))
@@ -191,11 +195,14 @@ def login_page(next: str = "") -> HTMLResponse:
     return HTMLResponse(_FORM.format(msg="", nxt=html.escape(next, quote=True)))
 
 
-@router.post("/login", include_in_schema=False)
+@router.post("/login", include_in_schema=False, dependencies=[Depends(ip_limit("login", "RL_LOGIN_PER_MIN"))])
 def login_submit(request: Request, username: str = Form(...), password: str = Form(...), next: str = Form(""), db: Session = Depends(get_db)):
+    if wait := username_blocked(username):
+        return HTMLResponse(_FORM.format(msg="<p style=color:#b00>Too many attempts. Try again later.</p>", nxt=html.escape(next, quote=True)), status_code=429, headers={"Retry-After": str(wait)})
     user = authenticate_user(db, username, password)
     record_login(db, username, user, request.client.host if request.client else None)
     if user is None:
+        username_failed(username)
         return HTMLResponse(_FORM.format(msg="<p style=color:#b00>Invalid credentials</p>", nxt=html.escape(next, quote=True)), status_code=401)
     destination = _safe_next(db, next) if next else None
     if next and destination is None:
@@ -216,7 +223,7 @@ def _finish(db: Session, next: str, username: str, mfa_at: int) -> Response:
     return response
 
 
-@router.post("/login/mfa", include_in_schema=False)
+@router.post("/login/mfa", include_in_schema=False, dependencies=[Depends(ip_limit("mfa", "RL_MFA_PER_MIN"))])
 def login_mfa(request: Request, mfa_token: str = Form(...), code: str = Form(...), next: str = Form(""), db: Session = Depends(get_db)):
     username = username_from_pending_token(mfa_token)
     user = db.query(models.User).filter(models.User.username == username).first() if username else None
@@ -243,7 +250,7 @@ def stepup_page(request: Request, next: str = "", db: Session = Depends(get_db))
     return HTMLResponse(_MFA_FORM.format(action="/api/enforce/stepup", msg="", nxt=html.escape(next, quote=True), tok=""))
 
 
-@router.post("/stepup", include_in_schema=False)
+@router.post("/stepup", include_in_schema=False, dependencies=[Depends(ip_limit("mfa", "RL_MFA_PER_MIN"))])
 def stepup_submit(request: Request, code: str = Form(...), next: str = Form(""), db: Session = Depends(get_db)):
     username = username_from_token(_token(request) or "")
     user = db.query(models.User).filter(models.User.username == username).first() if username else None

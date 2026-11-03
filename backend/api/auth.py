@@ -9,7 +9,9 @@ from backend.auth.auth import (
     get_current_user,
     username_from_pending_token,
 )
+from backend import config
 from backend.database import get_db
+from backend.security.ratelimit import ip_limit, too_many, username_blocked, username_failed
 from backend.models import User
 from backend.schemas import LoginRequest, LoginResponse, MfaLoginRequest, UserBase, UserSummary
 
@@ -28,12 +30,16 @@ def _finish_login(db: Session, user: User, mfa_at: int | None = None) -> LoginRe
     )
 
 
-@router.post("/login", response_model=LoginResponse)
+@router.post("/login", response_model=LoginResponse, dependencies=[Depends(ip_limit("login", "RL_LOGIN_PER_MIN"))])
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> LoginResponse:
     from backend.security.behavior import record_login
 
     ip = request.client.host if request.client else None
+    if wait := username_blocked(payload.username):
+        raise too_many(wait)
     user = authenticate_user(db, payload.username, payload.password)
+    if user is None:
+        username_failed(payload.username)
     if user is not None and user.mfa_enabled:
         return LoginResponse(mfa_required=True, mfa_token=create_mfa_pending_token(user.username))
     record_login(db, payload.username, user, ip)
@@ -46,7 +52,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     return _finish_login(db, user)
 
 
-@router.post("/mfa/verify", response_model=LoginResponse)
+@router.post("/mfa/verify", response_model=LoginResponse, dependencies=[Depends(ip_limit("mfa", "RL_MFA_PER_MIN"))])
 def verify_mfa(payload: MfaLoginRequest, request: Request, db: Session = Depends(get_db)) -> LoginResponse:
     from backend.security import mfa
     from backend.security.behavior import record_login
