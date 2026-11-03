@@ -1,4 +1,4 @@
-import { Activity, Building2, ClipboardList, Cloud, Laptop, LayoutDashboard, ShieldAlert, Users, Workflow } from "lucide-react";
+import { Activity, Building2, ClipboardList, Cloud, KeyRound, Laptop, LayoutDashboard, ShieldAlert, Users, Workflow } from "lucide-react";
 
 const items = [
   ["Overview", LayoutDashboard],
@@ -9,7 +9,8 @@ const items = [
   ["How It Works", Workflow],
   ["Resources", Cloud],
   ["Incidents", Activity],
-  ["Audit Logs", ClipboardList]
+  ["Audit Logs", ClipboardList],
+  ["Account Security", KeyRound]
 ];
 
 export default function Sidebar({ current, onNavigate }) {

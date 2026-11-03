@@ -359,14 +359,22 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    access_token: str
+    access_token: str | None = None
     token_type: str = "bearer"
-    user: UserSummary
+    user: UserSummary | None = None
+    mfa_required: bool = False
+    mfa_token: str | None = None
+
+
+class MfaLoginRequest(BaseModel):
+    mfa_token: str
+    code: str
 
 
 class HealthResponse(BaseModel):
     status: str
     service: str
+    demo_mode: bool = False
 
 
 class MongoHealthResponse(BaseModel):

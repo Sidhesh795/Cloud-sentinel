@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from backend import models
-from backend.config import DEMO_MODE, JWT_SECRET, SESSION_MINUTES
+from backend.config import DEMO_MODE, JWT_SECRET, MFA_VALID_MINUTES, SESSION_MINUTES
 from backend.database import get_db
 
 
@@ -26,26 +26,58 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(plain_password.encode("utf-8"), password_hash.encode("utf-8"))
 
 
-def create_access_token(subject: str, expires_delta: timedelta | None = None) -> str:
+def create_access_token(subject: str, expires_delta: timedelta | None = None, mfa_at: int | None = None) -> str:
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     payload = {"sub": subject, "exp": expire}
+    if mfa_at:
+        payload["mfa_at"] = mfa_at
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def create_gateway_token(subject: str) -> str:
+def create_gateway_token(subject: str, mfa_at: int | None = None) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=SESSION_MINUTES)
-    return jwt.encode({"sub": subject, "aud": "gateway", "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+    payload = {"sub": subject, "aud": "gateway", "exp": expire}
+    if mfa_at:
+        payload["mfa_at"] = mfa_at
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_mfa_pending_token(subject: str) -> str:
+    """Short-lived proof that the password step passed. Audience 'mfa' means it never authenticates API calls."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=5)
+    return jwt.encode({"sub": subject, "aud": "mfa", "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def username_from_pending_token(token: str) -> str | None:
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], audience="mfa").get("sub")
+    except jwt.PyJWTError:
+        return None
+
+
+def _payload(token: str) -> dict | None:
+    for kwargs in ({"audience": "gateway"}, {}):
+        try:
+            return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], **kwargs)
+        except jwt.PyJWTError:
+            continue
+    return None
 
 
 def username_from_token(token: str) -> str | None:
     """Accepts a gateway session token or a regular access token."""
-    for kwargs in ({"audience": "gateway"}, {}):
-        try:
-            return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], **kwargs).get("sub")
-        except jwt.PyJWTError:
-            continue
+    payload = _payload(token)
+    return payload.get("sub") if payload else None
+
+
+def mfa_at_from_token(token: str) -> int | None:
+    """Unix time of the TOTP step-up carried by the token, if it is still fresh."""
+    payload = _payload(token or "")
+    at = payload.get("mfa_at") if payload else None
+    if isinstance(at, int) and 0 <= datetime.now(timezone.utc).timestamp() - at <= MFA_VALID_MINUTES * 60:
+        return at
     return None
 
 

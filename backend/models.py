@@ -27,6 +27,11 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    mfa_secret_enc: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mfa_last_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mfa_failed_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    mfa_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped["Organization | None"] = relationship(back_populates="users")
     devices: Mapped[list["Device"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -243,3 +248,12 @@ class AnomalyFeedback(Base):
     verdict: Mapped[str] = mapped_column(String(24), nullable=False)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class MfaRecoveryCode(Base):
+    __tablename__ = "mfa_recovery_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

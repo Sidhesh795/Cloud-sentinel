@@ -13,10 +13,14 @@ from backend import config, models
 from backend.auth.auth import (
     authenticate_user,
     create_gateway_token,
+    create_mfa_pending_token,
+    mfa_at_from_token,
     require_admin_or_security,
+    username_from_pending_token,
     username_from_token,
 )
 from backend.database import get_db
+from backend.security import mfa
 from backend.security.behavior import record_hit, record_login
 from backend.security.zero_trust_gateway import evaluate_access, primary_device
 
@@ -89,7 +93,8 @@ def verify(request: Request, db: Session = Depends(get_db)) -> Response:
 
     action = _action(request)
     record_hit(user.id, app.id)
-    key = (user.id, app.id, action)
+    mfa_ok = bool(user.mfa_enabled and mfa_at_from_token(token))
+    key = (user.id, app.id, action, mfa_ok)
     hit = _cache.get(key)
     if hit and time.monotonic() - hit[0] < config.ENFORCE_CACHE_SECONDS:
         return Response(status_code=hit[1], headers=hit[2])
@@ -103,11 +108,17 @@ def verify(request: Request, db: Session = Depends(get_db)) -> Response:
         logger.exception("enforce unexpected error")
         return _reply(403, "DENY", "Access could not be evaluated")
 
-    allowed = d.decision == "ALLOW" or (d.decision == "READ_ONLY" and action == "READ")
+    allowed = (
+        d.decision == "ALLOW"
+        or (d.decision == "READ_ONLY" and action == "READ")
+        or (d.decision == "MFA_REQUIRED" and mfa_ok)
+    )
+    mfa_hint = {"X-CloudSentinel-MFA": "stepup" if user.mfa_enabled else "enroll"} if d.decision == "MFA_REQUIRED" and not mfa_ok else {}
     response = _reply(
         200 if allowed else 403,
         d.decision,
         d.reason + ((" | " + "; ".join(gd.risk.reasons[:3])) if not allowed and gd.risk.reasons else ""),
+        **mfa_hint,
         **({"X-CloudSentinel-User": user.username, "X-CloudSentinel-Risk": str(d.risk_score)} if allowed else {}),
     )
     _cache[key] = (time.monotonic(), response.status_code, dict(response.headers))
@@ -136,9 +147,9 @@ def set_upstream_host(
     clear_cache()
 
 
-def _set_cookie(response: Response, username: str) -> None:
+def _set_cookie(response: Response, username: str, mfa_at: int | None = None) -> None:
     response.set_cookie(
-        COOKIE, create_gateway_token(username), max_age=config.SESSION_MINUTES * 60,
+        COOKIE, create_gateway_token(username, mfa_at=mfa_at), max_age=config.SESSION_MINUTES * 60,
         httponly=True, secure=config.IS_PRODUCTION, samesite="lax", domain=config.COOKIE_DOMAIN,
     )
 
@@ -148,7 +159,8 @@ def create_session(request: Request, response: Response, db: Session = Depends(g
     username = username_from_token(_token(request) or "")
     if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    _set_cookie(response, username)
+    token = _token(request) or ""
+    _set_cookie(response, username, mfa_at=mfa_at_from_token(token))
 
 
 def _safe_next(db: Session, target: str) -> str | None:
@@ -167,6 +179,13 @@ _FORM = """<!doctype html><meta charset=utf-8><title>CloudSentinel</title>
 <button style="padding:8px 16px">Sign in</button></form></body>"""
 
 
+_MFA_FORM = """<!doctype html><meta charset=utf-8><title>CloudSentinel</title>
+<body style="font-family:system-ui;max-width:340px;margin:12vh auto"><h2>Verification code</h2>{msg}
+<form method=post action="{action}"><input type=hidden name=next value="{nxt}"><input type=hidden name=mfa_token value="{tok}">
+<p><input name=code placeholder="6-digit code or recovery code" autocomplete=one-time-code autofocus style="width:100%;padding:8px"></p>
+<button style="padding:8px 16px">Verify</button></form></body>"""
+
+
 @router.get("/login", response_class=HTMLResponse, include_in_schema=False)
 def login_page(next: str = "") -> HTMLResponse:
     return HTMLResponse(_FORM.format(msg="", nxt=html.escape(next, quote=True)))
@@ -181,6 +200,59 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
     destination = _safe_next(db, next) if next else None
     if next and destination is None:
         raise HTTPException(status_code=400, detail="Invalid redirect target")
+    if user.mfa_enabled:
+        return HTMLResponse(_MFA_FORM.format(action="/api/enforce/login/mfa", msg="", nxt=html.escape(next, quote=True), tok=create_mfa_pending_token(user.username)))
     response = RedirectResponse(destination, status_code=303) if destination else HTMLResponse("Signed in. You can close this tab.")
     _set_cookie(response, user.username)
     return response
+
+
+def _finish(db: Session, next: str, username: str, mfa_at: int) -> Response:
+    destination = _safe_next(db, next) if next else None
+    if next and destination is None:
+        raise HTTPException(status_code=400, detail="Invalid redirect target")
+    response = RedirectResponse(destination, status_code=303) if destination else HTMLResponse("Signed in. You can close this tab.")
+    _set_cookie(response, username, mfa_at=mfa_at)
+    return response
+
+
+@router.post("/login/mfa", include_in_schema=False)
+def login_mfa(request: Request, mfa_token: str = Form(...), code: str = Form(...), next: str = Form(""), db: Session = Depends(get_db)):
+    username = username_from_pending_token(mfa_token)
+    user = db.query(models.User).filter(models.User.username == username).first() if username else None
+    if user is None or not user.is_active or not user.mfa_enabled:
+        return HTMLResponse(_FORM.format(msg="<p style=color:#b00>Session expired. Sign in again.</p>", nxt=html.escape(next, quote=True)), status_code=401)
+    try:
+        ok = mfa.check_code(db, user, code)
+    except HTTPException:
+        return HTMLResponse(_FORM.format(msg="<p style=color:#b00>Too many attempts. Try again later.</p>", nxt=html.escape(next, quote=True)), status_code=429)
+    record_login(db, user.username, user if ok else None, request.client.host if request.client else None)
+    if not ok:
+        return HTMLResponse(_MFA_FORM.format(action="/api/enforce/login/mfa", msg="<p style=color:#b00>Invalid code</p>", nxt=html.escape(next, quote=True), tok=html.escape(mfa_token, quote=True)), status_code=401)
+    return _finish(db, next, user.username, int(time.time()))
+
+
+@router.get("/stepup", response_class=HTMLResponse, include_in_schema=False)
+def stepup_page(request: Request, next: str = "", db: Session = Depends(get_db)) -> HTMLResponse:
+    username = username_from_token(_token(request) or "")
+    user = db.query(models.User).filter(models.User.username == username).first() if username else None
+    if user is None:
+        return HTMLResponse(_FORM.format(msg="", nxt=html.escape(next, quote=True)), status_code=401)
+    if not user.mfa_enabled:
+        return HTMLResponse("<body style=\"font-family:system-ui;max-width:340px;margin:12vh auto\"><h2>MFA enrollment required</h2><p>Enable TOTP MFA in the CloudSentinel dashboard, then retry.</p></body>", status_code=403)
+    return HTMLResponse(_MFA_FORM.format(action="/api/enforce/stepup", msg="", nxt=html.escape(next, quote=True), tok=""))
+
+
+@router.post("/stepup", include_in_schema=False)
+def stepup_submit(request: Request, code: str = Form(...), next: str = Form(""), db: Session = Depends(get_db)):
+    username = username_from_token(_token(request) or "")
+    user = db.query(models.User).filter(models.User.username == username).first() if username else None
+    if user is None or not user.mfa_enabled:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        ok = mfa.check_code(db, user, code)
+    except HTTPException:
+        return HTMLResponse("<p>Too many attempts. Try again later.</p>", status_code=429)
+    if not ok:
+        return HTMLResponse(_MFA_FORM.format(action="/api/enforce/stepup", msg="<p style=color:#b00>Invalid code</p>", nxt=html.escape(next, quote=True), tok=""), status_code=401)
+    return _finish(db, next, user.username, int(time.time()))

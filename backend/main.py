@@ -16,6 +16,7 @@ from backend.api import (
     events,
     health,
     intelligence,
+    mfa,
     organization,
     risk,
     simulation,
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
+    app.include_router(mfa.router, prefix="/api")
     app.include_router(organization.router, prefix="/api")
     app.include_router(admin.router, prefix="/api")
     app.include_router(users.router, prefix="/api")

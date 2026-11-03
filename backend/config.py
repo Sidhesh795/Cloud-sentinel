@@ -34,6 +34,11 @@ DEVICE_STALE_SECONDS = int(os.getenv("DEVICE_STALE_SECONDS", "900"))
 ENFORCE_CACHE_SECONDS = int(os.getenv("ENFORCE_CACHE_SECONDS", "15"))
 LIVE_BEHAVIOR = _flag("LIVE_BEHAVIOR", not DEMO_MODE)
 SESSION_MINUTES = int(os.getenv("SESSION_MINUTES", "480"))
+MFA_ISSUER = os.getenv("MFA_ISSUER", "CloudSentinel")
+MFA_VALID_MINUTES = int(os.getenv("MFA_VALID_MINUTES", "60"))  # how long a TOTP step-up satisfies MFA_REQUIRED
+MFA_MAX_ATTEMPTS = int(os.getenv("MFA_MAX_ATTEMPTS", "5"))
+MFA_LOCK_SECONDS = int(os.getenv("MFA_LOCK_SECONDS", "300"))
+MFA_ENCRYPTION_KEY = os.getenv("MFA_ENCRYPTION_KEY", "")  # recommended in prod; falls back to a key derived from JWT_SECRET
 COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
 
 _DEV_SECRET = "cloudsentinel-dev-secret-change-me"

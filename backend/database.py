@@ -45,6 +45,11 @@ def _ensure_sqlite_v11_columns() -> None:
             ("updated_at", "DATETIME"),
             ("last_login", "DATETIME"),
             ("last_seen", "DATETIME"),
+            ("mfa_enabled", "BOOLEAN DEFAULT 0 NOT NULL"),
+            ("mfa_secret_enc", "VARCHAR(255)"),
+            ("mfa_last_step", "INTEGER"),
+            ("mfa_failed_attempts", "INTEGER DEFAULT 0 NOT NULL"),
+            ("mfa_locked_until", "DATETIME"),
         ],
         "devices": [
             ("organization_id", "INTEGER"),

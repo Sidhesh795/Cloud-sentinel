@@ -10,6 +10,7 @@ import Devices from "./pages/Devices.jsx";
 import Incidents from "./pages/Incidents.jsx";
 import Login from "./pages/Login.jsx";
 import Organization from "./pages/Organization.jsx";
+import Security from "./pages/Security.jsx";
 import Resources from "./pages/Resources.jsx";
 import SystemWorkflow from "./pages/SystemWorkflow.jsx";
 import UserProfile from "./pages/UserProfile.jsx";
@@ -108,11 +109,22 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [token, currentUser, selectedUserId, loadAll]);
 
-  async function handleLogin(username, password) {
-    const result = await Api.login(username, password);
+  async function finishLogin(result) {
     setToken(result.access_token);
     setCurrentUser(result.user);
     await loadAll(result.user.id);
+  }
+
+  async function handleLogin(username, password) {
+    const result = await Api.login(username, password);
+    if (!result.mfa_required) await finishLogin(result);
+    return result;
+  }
+
+  async function handleMfaVerify(mfaToken, code) {
+    const result = await Api.mfaVerify(mfaToken, code);
+    await finishLogin(result);
+    return result;
   }
 
   async function handleSelectUser(id) {
@@ -166,6 +178,7 @@ export default function App() {
   const pageContent = useMemo(() => {
     if (!data) return null;
     const shared = { data, onSelectUser: handleSelectUser, onDecisionSelect: handleDecisionSelect };
+    if (page === "Account Security") return <Security />;
     if (page === "Organization") return <Organization data={data} />;
     if (page === "Users") return <Users {...shared} onCreateUser={handleCreateUser} onUpdateUser={handleUpdateUser} onDisableUser={handleDisableUser} />;
     if (page === "Devices") return <Devices data={data} onRefreshDevice={handleDeviceHeartbeat} onSubmitHealthyPosture={handleHealthyPosture} />;
@@ -177,7 +190,7 @@ export default function App() {
     return <Dashboard {...shared} simulation={simulation} />;
   }, [data, page, simulation]);
 
-  if (!currentUser && !getToken()) return <Login onLogin={handleLogin} />;
+  if (!currentUser && !getToken()) return <Login onLogin={handleLogin} onMfaVerify={handleMfaVerify} />;
 
   return (
     <AppShell page={page} onNavigate={setPage} applications={data?.applications || []} organization={data?.organization}>

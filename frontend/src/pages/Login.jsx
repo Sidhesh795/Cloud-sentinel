@@ -1,9 +1,22 @@
 import { ShieldCheck, UserCheck, KeyRound } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Api } from "../services/api.js";
 
-export default function Login({ onLogin }) {
-  const [username, setUsername] = useState("developer01");
-  const [password, setPassword] = useState("CloudDemo123!");
+export default function Login({ onLogin, onMfaVerify }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [demo, setDemo] = useState(false);
+  const [mfaToken, setMfaToken] = useState("");
+  const [code, setCode] = useState("");
+
+  useEffect(() => {
+    Api.health().then((h) => {
+      if (!h?.demo_mode) return;
+      setDemo(true);
+      setUsername((u) => u || "developer01");
+      setPassword((p) => p || "CloudDemo123!");
+    }).catch(() => {});
+  }, []);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -12,12 +25,18 @@ export default function Login({ onLogin }) {
     setLoading(true);
     setError("");
     try {
-      await onLogin(username.trim(), password);
+      const result = mfaToken ? await onMfaVerify(mfaToken, code.trim()) : await onLogin(username.trim(), password);
+      if (result?.mfa_required) {
+        setMfaToken(result.mfa_token);
+        setCode("");
+      }
     } catch (err) {
       if (!err?.response) {
         setError("Cannot connect to backend server. Make sure VITE_API_BASE_URL is set in Vercel to your Render service URL.");
       } else {
-        setError(err?.response?.data?.detail || "Login failed");
+        const detail = err?.response?.data?.detail;
+        if (mfaToken && err?.response?.status === 401 && /expired/i.test(detail || "")) setMfaToken("");
+        setError(detail || "Login failed");
       }
     } finally {
       setLoading(false);
@@ -43,7 +62,7 @@ export default function Login({ onLogin }) {
           </div>
         </div>
 
-        <div className="mb-5 rounded-md border border-sky-500/20 bg-sky-500/10 p-3 text-xs text-sky-200">
+        {demo && !mfaToken && <div className="mb-5 rounded-md border border-sky-500/20 bg-sky-500/10 p-3 text-xs text-sky-200">
           <div className="font-semibold mb-1 flex items-center gap-1.5 text-sky-300">
             <UserCheck className="h-3.5 w-3.5" />
             Quick Demo Profiles
@@ -72,8 +91,23 @@ export default function Login({ onLogin }) {
               admin01 (Avery Shah)
             </button>
           </div>
-        </div>
+        </div>}
 
+        {mfaToken ? (
+          <>
+            <label className="metric-label" htmlFor="code">Verification code</label>
+            <input
+              id="code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              autoComplete="one-time-code"
+              autoFocus
+              placeholder="6-digit code or recovery code"
+              className="focus-ring mt-2 w-full rounded-md border border-sentinel-border bg-black/20 px-3 py-2.5 text-sm text-white"
+            />
+          </>
+        ) : (
+          <>
         <label className="metric-label" htmlFor="username">Username</label>
         <input
           id="username"
@@ -87,19 +121,20 @@ export default function Login({ onLogin }) {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="Demo password"
           className="focus-ring mt-2 w-full rounded-md border border-sentinel-border bg-black/20 px-3 py-2.5 text-sm text-white"
         />
+          </>
+        )}
         {error && <div className="mt-4 rounded-md border border-red-400/25 bg-red-500/10 px-3 py-2 text-sm text-red-200">{error}</div>}
         <button
           disabled={loading}
           className="focus-ring mt-6 w-full rounded-md bg-sky-400 px-4 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:opacity-60"
         >
-          {loading ? "Authenticating" : "Enter Control Center"}
+          {loading ? "Authenticating" : mfaToken ? "Verify" : "Enter Control Center"}
         </button>
-        <p className="mt-4 text-xs text-slate-500 flex items-center gap-1.5">
+        {demo && !mfaToken && <p className="mt-4 text-xs text-slate-500 flex items-center gap-1.5">
           <KeyRound className="h-3 w-3" /> Password for all demo accounts: <code className="text-slate-300">CloudDemo123!</code>
-        </p>
+        </p>}
       </form>
     </div>
   );

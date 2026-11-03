@@ -16,6 +16,7 @@ def test_health(client):
     assert response.json() == {
         "status": "healthy",
         "service": "cloudsentinel-backend",
+        "demo_mode": True,
     }
 
 
