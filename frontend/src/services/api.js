@@ -32,7 +32,6 @@ export const Api = {
   flaggedSnapshots: (id) => api.get(`/api/intelligence/users/${id}/snapshots`, { params: { flagged: true } }).then(r => r.data),
   feedback: (id, verdict) => api.post(`/api/intelligence/snapshots/${id}/feedback`, { verdict }),
   health: () => api.get("/api/health").then((r) => r.data),
-  mongoHealth: () => api.get("/api/health/mongodb").then((r) => r.data),
   login: (username, password) => api.post("/api/auth/login", { username, password }).then((r) => r.data),
   mfaVerify: (mfa_token, code) => api.post("/api/auth/mfa/verify", { mfa_token, code }).then((r) => r.data),
   mfaStatus: () => api.get("/api/mfa/status").then((r) => r.data),

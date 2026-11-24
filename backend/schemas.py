@@ -378,12 +378,6 @@ class HealthResponse(BaseModel):
     demo_mode: bool = False
 
 
-class MongoHealthResponse(BaseModel):
-    status: str
-    database: str
-    detail: str | None = None
-
-
 class EnrollmentTokenRequest(BaseModel):
     user_id: int | None = None
     ttl_minutes: int = Field(default=60, ge=5, le=1440)

@@ -23,9 +23,8 @@ from backend.api import (
     telemetry,
     users,
 )
-from backend.config import APP_ENV, AUTO_SEED, DATA_STORE, DEMO_MODE, IS_PRODUCTION, SENTRY_DSN, get_allowed_origins
+from backend.config import APP_ENV, AUTO_SEED, DEMO_MODE, IS_PRODUCTION, SENTRY_DSN, get_allowed_origins
 from backend.database import init_db
-from backend.db.mongodb import close_mongodb, init_mongodb
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -59,10 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if not IS_PRODUCTION:
         init_db()  # production schema is managed by Alembic: `alembic upgrade head`
     _auto_seed_if_needed()
-    if DATA_STORE == "mongodb":
-        init_mongodb()
     yield
-    close_mongodb()
 
 
 def create_app() -> FastAPI:

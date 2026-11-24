@@ -1,8 +1,7 @@
 from fastapi import APIRouter
 
-from backend.config import DATA_STORE, DEMO_MODE
-from backend.db.mongodb import health as mongodb_health
-from backend.schemas import HealthResponse, MongoHealthResponse
+from backend.config import DEMO_MODE
+from backend.schemas import HealthResponse
 
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -12,10 +11,3 @@ router = APIRouter(prefix="/health", tags=["health"])
 def health() -> HealthResponse:
     return HealthResponse(status="healthy", service="cloudsentinel-backend", demo_mode=DEMO_MODE)
 
-
-@router.get("/mongodb", response_model=MongoHealthResponse)
-def health_mongodb() -> MongoHealthResponse:
-    payload = mongodb_health()
-    if DATA_STORE != "mongodb" and payload["status"] != "healthy":
-        payload["detail"] = "MongoDB is optional until DATA_STORE=mongodb is configured"
-    return MongoHealthResponse(**payload)

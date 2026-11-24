@@ -51,7 +51,7 @@ backend/security/     posture, tags, anomaly, risk, policy, gateway, simulation
 backend/data/         deterministic seed script
 frontend/             React dashboard
 frontend/src/         pages, components, hooks, services
-ml/                   Isolation Forest training script and model
+ml/                   (removed; anomaly model trains in-process at startup)
 tests/                backend test suite
 scripts/              smoke verification scripts
 docs/                 architecture and live demo guide
@@ -63,7 +63,6 @@ docs/                 architecture and live demo guide
 cd C:\Users\Nihal\Desktop\AZTMM\cloudsentinel
 python -m pip install -r requirements.txt
 python -m backend.data.seed
-python -m ml.train
 python -m uvicorn backend.main:app --reload
 ```
 
@@ -82,12 +81,11 @@ MONGODB_DATABASE=cloudsentinel
 JWT_SECRET=
 ```
 
-SQLite remains the default demo/fallback data store. Set `DATA_STORE=mongodb` and `MONGODB_URI` to enable MongoDB Atlas connection and repository writes.
+SQLite is the dev/demo store; production uses Postgres via `DATABASE_URL`.
 
 Backend URLs:
 
 - `http://127.0.0.1:8000/api/health`
-- `http://127.0.0.1:8000/api/health/mongodb`
 - `http://127.0.0.1:8000/docs`
 - `http://127.0.0.1:8000/openapi.json`
 

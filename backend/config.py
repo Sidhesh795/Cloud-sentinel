@@ -14,9 +14,6 @@ if load_dotenv is not None:
     load_dotenv(ENV_FILE, override=False)
 
 
-DATA_STORE = os.getenv("DATA_STORE", "sqlite").strip().lower() or "sqlite"
-MONGODB_URI = os.getenv("MONGODB_URI", "").strip()
-MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "cloudsentinel").strip() or "cloudsentinel"
 def _flag(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -86,8 +83,4 @@ def get_allowed_origins() -> list[str]:
             if cleaned and cleaned not in default_origins:
                 default_origins.append(cleaned)
     return default_origins
-
-
-def using_mongodb() -> bool:
-    return DATA_STORE == "mongodb"
 

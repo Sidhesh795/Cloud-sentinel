@@ -25,9 +25,9 @@ APP_ENV, DEMO_MODE, JWT_SECRET, DATABASE_URL, ALLOWED_ORIGINS, COOKIE_DOMAIN, RE
 2. MFA is not implemented: `MFA_REQUIRED` is treated as blocked. Add TOTP/WebAuthn step-up.
 3. (Done in phase 6) Rate limiting; Redis backend still TODO for multi-worker.
 4. Live behavior state (request hits) is in-process memory; use Redis for multi-worker. Data-volume feature is always 0 (proxy doesn't measure bytes).
-5. MongoDB path is deprecated but still wired in; remove.
+5. (Done in phase 8) MongoDB path removed.
 6. Browser sessions are not bound to a specific device (verify uses user's most recent device).
-7. `ml/model.pkl` is loaded with pickle; ship it from a trusted build only or replace.
+7. (Done in phase 8) Anomaly model trains in-process at startup; no pickle.
 8. Agent: Windows service + signed .exe, DPAPI credential store; Defender-only AV detection.
 9. Verify the Phase 7 operations workflows on staging.
 

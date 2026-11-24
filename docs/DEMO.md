@@ -18,7 +18,6 @@ Start the backend:
 ```bash
 cd C:\Users\Nihal\Desktop\AZTMM\cloudsentinel
 python -m backend.data.seed
-python -m ml.train
 python -m uvicorn backend.main:app --reload
 ```
 

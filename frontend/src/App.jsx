@@ -32,14 +32,13 @@ export default function App() {
     if (!options.silent) setLoading(true);
     setError("");
     try {
-      const [me, users, applications, events, organization, devices, mongoHealth, health] = await Promise.all([
+      const [me, users, applications, events, organization, devices, health] = await Promise.all([
         Api.me(),
         Api.users(),
         Api.applications(),
         Api.events(),
         Api.organization().catch(() => null),
         Api.devices().catch(() => []),
-        Api.mongoHealth().catch(() => null),
         Api.health()
       ]);
       const targetId = preferredUserId || selectedUserId || me.id || users[0]?.id;
@@ -70,7 +69,6 @@ export default function App() {
         applications,
         organization,
         devices,
-        mongoHealth,
         events,
         userEvents,
         selected,

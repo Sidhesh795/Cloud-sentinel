@@ -22,9 +22,6 @@ cloudsentinel/
     config.py
     models.py
     schemas.py
-    db/
-      mongodb.py
-      repositories/
     auth/
       auth.py
     security/
@@ -45,9 +42,6 @@ cloudsentinel/
       simulation.py
     data/
       seed.py
-  ml/
-    train.py
-    model.pkl
   frontend/
     src/
       components/
@@ -106,7 +100,7 @@ Implemented routers:
 
 ### Database
 
-SQLite is accessed through SQLAlchemy and remains the default demo/fallback data store. MongoDB Atlas is optional and explicitly enabled with `DATA_STORE=mongodb`.
+SQLAlchemy is used with SQLite in dev and Postgres in production.
 
 The implemented SQLite tables are:
 
@@ -206,7 +200,6 @@ The implemented API surface is:
 
 ```text
 GET /api/health
-GET /api/health/mongodb
 POST /api/auth/login
 GET /api/auth/me
 GET /api/organization

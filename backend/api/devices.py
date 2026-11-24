@@ -7,11 +7,7 @@ from sqlalchemy.orm import Session
 
 from backend import models
 from backend.auth.auth import create_access_token, get_current_user, normalize_role
-from backend.config import using_mongodb
 from backend.database import get_db
-from backend.db.repositories.devices import DeviceRepository
-from backend.db.repositories.events import SecurityEventRepository
-from backend.db.repositories.telemetry import TelemetryRepository
 from backend.schemas import (
     DeviceHeartbeatRequest,
     DeviceHeartbeatResponse,
@@ -76,22 +72,6 @@ def _audit_device_event(
         metadata_json=metadata or {},
     )
     db.add(event)
-    if using_mongodb():
-        SecurityEventRepository().insert(
-            {
-                "organization_id": str(device.organization_id),
-                "user_id": str(device.user_id),
-                "device_id": device.device_id,
-                "event_type": event_type,
-                "severity": "INFO",
-                "timestamp": event.timestamp,
-                "source": "AGENT",
-                "description": description,
-                "metadata": metadata or {},
-            }
-        )
-
-
 def _derive_posture(payload: DevicePostureRequest) -> tuple[str, list[str]]:
     reasons: list[str] = []
     if payload.security_product_active is False:
@@ -203,26 +183,6 @@ def register_device(
     db.commit()
     db.refresh(device)
 
-    if using_mongodb():
-        DeviceRepository().insert(
-            {
-                "organization_id": str(device.organization_id),
-                "user_id": str(device.user_id),
-                "device_id": device.device_id,
-                "device_name": device.device_name,
-                "hostname": device.hostname,
-                "platform": device.platform,
-                "platform_version": device.platform_version,
-                "agent_version": device.agent_version,
-                "device_fingerprint": device.device_fingerprint,
-                "status": device.status,
-                "posture_status": device.posture_status,
-                "registered_at": device.registered_at,
-                "last_seen": device.last_seen,
-                "environment": "DEMO",
-            }
-        )
-
     return DeviceRegisterResponse(
         device_id=device.device_id,
         agent_registration_token=create_access_token(f"device:{device.device_id}"),
@@ -299,18 +259,6 @@ def apply_posture(db: Session, device: models.Device, payload: DevicePostureRequ
             {"previous": previous, "current": posture_status, "reasons": reasons},
         )
     db.commit()
-    if using_mongodb():
-        TelemetryRepository().insert(
-            {
-                "organization_id": str(device.organization_id),
-                "user_id": str(device.user_id),
-                "device_id": device.device_id,
-                "timestamp": telemetry.timestamp,
-                "event_type": "DEVICE_POSTURE",
-                "source": "AGENT",
-                "metadata": telemetry.metadata_json,
-            }
-        )
     return DevicePostureResponse(
         device_id=device.device_id,
         posture_status=posture_status,

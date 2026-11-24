@@ -42,15 +42,11 @@ def ensure_admin():
         db.close()
 
 
-def test_organization_context_and_mongodb_health(client):
+def test_organization_context(client):
     token = login(client)["access_token"]
     org = client.get("/api/organization", headers=auth_headers(token))
     assert org.status_code == 200
     assert org.json()["name"] == "CloudSentinel Demo"
-
-    mongo = client.get("/api/health/mongodb")
-    assert mongo.status_code == 200
-    assert mongo.json()["database"] == "cloudsentinel"
 
 
 def test_admin_user_lifecycle_and_role_authorization(client):

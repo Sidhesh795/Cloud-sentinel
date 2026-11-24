@@ -6,9 +6,6 @@ from sqlalchemy.orm import Session
 from backend import models
 from backend.auth.auth import hash_password, normalize_role, require_admin_or_security
 from backend.database import get_db
-from backend.db.repositories.events import SecurityEventRepository
-from backend.db.repositories.users import UserRepository
-from backend.config import using_mongodb
 from backend.schemas import AdminUserCreate, AdminUserUpdate, UserBase
 
 
@@ -44,21 +41,6 @@ def _audit_admin_action(db: Session, actor: models.User, target: models.User, ac
         metadata_json={"actor_user_id": actor.id, "target_user_id": target.id},
     )
     db.add(event)
-    if using_mongodb():
-        SecurityEventRepository().insert(
-            {
-                "organization_id": str(actor.organization_id),
-                "user_id": str(target.id),
-                "event_type": action,
-                "severity": "INFO",
-                "timestamp": event.timestamp,
-                "source": "CONTROL_PLANE",
-                "description": event.description,
-                "metadata": event.metadata_json,
-            }
-        )
-
-
 @router.post("", response_model=UserBase, status_code=status.HTTP_201_CREATED)
 def create_user(
     payload: AdminUserCreate,
@@ -92,21 +74,6 @@ def create_user(
     _audit_admin_action(db, current_user, user, "USER_CREATED")
     db.commit()
     db.refresh(user)
-    if using_mongodb():
-        UserRepository().insert(
-            {
-                "organization_id": str(user.organization_id),
-                "sqlite_id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "display_name": user.display_name,
-                "role": user.role,
-                "status": user.status,
-                "environment": "DEMO",
-                "last_login": user.last_login,
-                "last_seen": user.last_seen,
-            }
-        )
     return user
 
 

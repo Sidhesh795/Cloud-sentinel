@@ -1,6 +1,5 @@
 from dataclasses import dataclass
-from pathlib import Path
-import pickle
+from functools import lru_cache
 
 try:
     from sklearn.ensemble import IsolationForest
@@ -27,9 +26,6 @@ NORMAL_BASELINE = [
     [21, 52, 0, 2, 5, 10],
     [25, 70, 1, 3, 7, 13],
 ]
-
-MODEL_PATH = Path(__file__).resolve().parents[2] / "ml" / "model.pkl"
-
 
 @dataclass(frozen=True)
 class AnomalyAssessment:
@@ -59,21 +55,9 @@ def train_model():
     return model
 
 
-def save_model(path: Path = MODEL_PATH) -> Path:
-    model = train_model()
-    if model is None:
-        raise RuntimeError("scikit-learn is required to train the anomaly model")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as model_file:
-        pickle.dump(model, model_file)
-    return path
- 
-
+@lru_cache(maxsize=1)
 def load_model():
-    if IsolationForest is None or not MODEL_PATH.exists():
-        return None
-    with MODEL_PATH.open("rb") as model_file:
-        return pickle.load(model_file)
+    return train_model()
 
 
 def heuristic_behavior_risk(features: list[float]) -> int:

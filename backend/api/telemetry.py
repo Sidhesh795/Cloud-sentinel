@@ -2,10 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend import models
-from backend.config import using_mongodb
 from backend.auth.auth import get_current_user, get_scoped_user
 from backend.database import get_db
-from backend.db.repositories.telemetry import TelemetryRepository
 from backend.schemas import TelemetryCreate, TelemetryRead
 
 
@@ -48,18 +46,6 @@ def create_telemetry(
     db.add(telemetry)
     db.commit()
     db.refresh(telemetry)
-    if using_mongodb():
-        TelemetryRepository().insert(
-            {
-                "organization_id": str(user.organization_id),
-                "user_id": str(user.id),
-                "device_id": device.device_id,
-                "timestamp": telemetry.timestamp,
-                "event_type": telemetry.event_type,
-                "source": telemetry.source,
-                "metadata": telemetry.metadata_json,
-            }
-        )
     return TelemetryRead.from_model(telemetry)
 
 
