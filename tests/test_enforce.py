@@ -97,3 +97,17 @@ def test_cannot_query_other_users_access(client):
 
 def test_only_admin_can_map_hosts(client):
     assert client.put("/api/enforce/applications/1/host", headers={"authorization": f"Bearer {_login(client)}"}, json={"upstream_host": "a.test"}).status_code == 403
+
+def test_host_mapping_is_owned_and_visible_after_save(client):
+    with TestingSessionLocal() as db:
+        user = db.query(models.User).filter_by(username="developer01").one()
+        user.role = "ADMIN"
+        owned = db.query(models.Application).filter_by(name="Email").one()
+        shared = db.query(models.Application).filter_by(name="HR Portal").one()
+        owned.organization_id = user.organization_id
+        owned_id, shared_id = owned.id, shared.id
+        db.commit()
+    for value in ("payroll.example.com", None):
+        assert client.put(f"/api/enforce/applications/{owned_id}/host", json={"upstream_host": value}).status_code == 204
+        assert client.get(f"/api/applications/{owned_id}").json()["upstream_host"] == value
+    assert client.put(f"/api/enforce/applications/{shared_id}/host", json={"upstream_host": "shared.test"}).status_code == 404

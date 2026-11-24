@@ -13,15 +13,16 @@ const items = [
   ["Account Security", KeyRound]
 ];
 
-export default function Sidebar({ current, onNavigate }) {
+export default function Sidebar({ current, operator, onNavigate }) {
+  const visible = operator ? [...items, ["Agent Enrollment", Laptop], ["Host Mapping", Cloud], ["Behavior Review", Activity]] : items;
   return (
-    <aside className="flex h-screen w-64 shrink-0 flex-col border-r border-sentinel-border bg-[#071321]/95 px-4 py-5">
+    <aside className="flex h-screen overflow-y-auto w-64 shrink-0 flex-col border-r border-sentinel-border bg-[#071321]/95 px-4 py-5">
       <div className="mb-8">
         <div className="text-lg font-black tracking-[0.18em] text-white">CLOUDSENTINEL</div>
         <div className="mt-1 text-xs uppercase tracking-[0.18em] text-sky-300">Zero Trust Control</div>
       </div>
       <nav className="space-y-1">
-        {items.map(([label, Icon]) => (
+        {visible.map(([label, Icon]) => (
           <button
             key={label}
             onClick={() => onNavigate(label)}

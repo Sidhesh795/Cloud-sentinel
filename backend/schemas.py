@@ -141,6 +141,7 @@ class DevicePostureResponse(BaseModel):
 
 
 class ApplicationRead(BaseModel):
+    upstream_host: str | None = None
     id: int
     organization_id: int | None = None
     name: str

@@ -12,7 +12,7 @@ const blankUser = {
   status: "ACTIVE"
 };
 
-export default function Users({ data, onSelectUser, onCreateUser, onUpdateUser, onDisableUser }) {
+export default function Users({ operator, data, onSelectUser, onCreateUser, onUpdateUser, onDisableUser }) {
   const [draft, setDraft] = useState(blankUser);
   const [editing, setEditing] = useState(null);
 
@@ -37,8 +37,8 @@ export default function Users({ data, onSelectUser, onCreateUser, onUpdateUser, 
   }
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[360px_1fr]">
-      <form onSubmit={submitNew} className="panel p-5">
+    <section className={operator ? "grid gap-4 xl:grid-cols-[360px_1fr]" : "grid gap-4"}>
+      {operator && <form onSubmit={submitNew} className="panel p-5">
         <div className="metric-label">Admin</div>
         <h2 className="mt-1 text-2xl font-bold text-white">Add User</h2>
         <div className="mt-5 grid gap-3">
@@ -56,7 +56,7 @@ export default function Users({ data, onSelectUser, onCreateUser, onUpdateUser, 
             Create User
           </button>
         </div>
-      </form>
+      </form>}
       <section className="panel p-5">
         <div className="mb-4">
           <div className="metric-label">Users</div>
@@ -111,6 +111,7 @@ export default function Users({ data, onSelectUser, onCreateUser, onUpdateUser, 
                     <button title="View identity" onClick={() => onSelectUser(user.id)} className="focus-ring rounded-md border border-sentinel-border p-2 text-slate-300 hover:bg-white/5">
                       <Eye className="h-4 w-4" />
                     </button>
+                    {operator && <>
                     {isEditing ? (
                       <button title="Save user" onClick={() => saveEdit(user)} className="focus-ring rounded-md border border-emerald-400/30 p-2 text-emerald-300 hover:bg-emerald-500/10">
                         <Save className="h-4 w-4" />
@@ -123,6 +124,7 @@ export default function Users({ data, onSelectUser, onCreateUser, onUpdateUser, 
                     <button title="Disable user" onClick={() => onDisableUser(user.id)} className="focus-ring rounded-md border border-red-400/30 p-2 text-red-300 hover:bg-red-500/10">
                       <Ban className="h-4 w-4" />
                     </button>
+                    </>}
                   </div>
                 </div>
               </div>

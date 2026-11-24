@@ -142,7 +142,7 @@ def set_upstream_host(
 ) -> None:
     query = db.query(models.Application).filter(models.Application.id == application_id)
     app = query.first()
-    if app is None or (app.organization_id is not None and app.organization_id != admin.organization_id):
+    if app is None or app.organization_id is None or app.organization_id != admin.organization_id:
         raise HTTPException(status_code=404, detail="Application not found")
     if body.upstream_host and db.query(models.Application).filter(models.Application.upstream_host == body.upstream_host, models.Application.id != app.id).first():
         raise HTTPException(status_code=409, detail="Host already mapped")

@@ -45,7 +45,7 @@ export default function Dashboard({ data, onSelectUser, onDecisionSelect, simula
         </div>
       </section>
 
-      <SimulationPanel simulation={simulation} data={data} />
+      {data.canUseSimulation && <SimulationPanel simulation={simulation} data={data} />}
 
       <section className="grid grid-cols-4 gap-4">
         <Metric icon={Users} label="Total Users" value={data.users.length} />

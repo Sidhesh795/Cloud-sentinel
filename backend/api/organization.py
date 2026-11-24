@@ -15,14 +15,7 @@ def get_organization(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ) -> models.Organization:
-    if current_user.organization_id is None:
-        organization = db.query(models.Organization).order_by(models.Organization.id).first()
-    else:
-        organization = (
-            db.query(models.Organization)
-            .filter(models.Organization.id == current_user.organization_id)
-            .first()
-        )
+    organization = db.get(models.Organization, current_user.organization_id) if current_user.organization_id is not None else None
     if organization is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
     return organization

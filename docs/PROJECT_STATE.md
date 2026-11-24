@@ -12,11 +12,16 @@ Stack: FastAPI + SQLAlchemy + Alembic (Postgres in prod, SQLite in dev), React/V
 - Phase 6 (rate limiting): in-process sliding window (backend/security/ratelimit.py). Per-IP: login (JSON + enforce form) 20/min, MFA (login step, /api/mfa/*, enforce login/mfa+stepup) 20/min, agent enroll 10/min; per-username: 10 failed logins/5 min (failures only, successes never lock); /api/enforce/verify 600/min per user (429 + Retry-After, fails closed). Env: RATE_LIMIT_ENABLED, TRUSTED_PROXY_HOPS (Render=1; uses Nth-from-last X-Forwarded-For, spoof-safe; 0 = socket IP), RL_LOGIN_PER_MIN, RL_MFA_PER_MIN, RL_ENROLL_PER_MIN, RL_VERIFY_PER_MIN, LOGIN_USER_FAILS, LOGIN_USER_WINDOW. Per-worker memory; move to Redis when scaling out. No migration.
 - Phase 3: per-user robust baselines from LIVE snapshots (`backend/security/behavior.py`), explainable deviations, false-positive/confirmed feedback, metrics (`/api/intelligence/*`), login-attempt tracking. Active when `LIVE_BEHAVIOR=true` (default off in demo mode).
 
+## Phase 7 frontend operations
+Admins and security analysts can issue single-use agent enrollment tokens, map or clear hostnames for organization-owned applications, and review flagged live snapshots against user baselines. Employees retain their self-service views. Accounts can open the console before telemetry arrives. No migration is required.
+
+From `frontend`, run `npm run build`, then `npx playwright test e2e/phase7.spec.js` with Chromium installed (or set `PLAYWRIGHT_CHANNEL=chrome` for installed Chrome). The browser tests use a local production build and mocked API responses.
+
 ## Key env vars
 APP_ENV, DEMO_MODE, JWT_SECRET, DATABASE_URL, ALLOWED_ORIGINS, COOKIE_DOMAIN, REQUIRE_AGENT_DEVICE, DEVICE_STALE_SECONDS, ENFORCE_CACHE_SECONDS, LIVE_BEHAVIOR, SENTRY_DSN.
 
 ## Known gaps (priority order)
-1. (Done in phase 4) Legacy endpoints authenticated + tenant-scoped. Remaining: applications with NULL organization_id are a shared catalog visible to all tenants; frontend not yet verified against non-admin views.
+1. (Done in phase 4) Legacy endpoints authenticated + tenant-scoped. Remaining: applications with NULL organization_id are a shared catalog visible to all tenants; shared host mappings are read-only.
 2. MFA is not implemented: `MFA_REQUIRED` is treated as blocked. Add TOTP/WebAuthn step-up.
 3. (Done in phase 6) Rate limiting; Redis backend still TODO for multi-worker.
 4. Live behavior state (request hits) is in-process memory; use Redis for multi-worker. Data-volume feature is always 0 (proxy doesn't measure bytes).
@@ -24,7 +29,7 @@ APP_ENV, DEMO_MODE, JWT_SECRET, DATABASE_URL, ALLOWED_ORIGINS, COOKIE_DOMAIN, RE
 6. Browser sessions are not bound to a specific device (verify uses user's most recent device).
 7. `ml/model.pkl` is loaded with pickle; ship it from a trusted build only or replace.
 8. Agent: Windows service + signed .exe, DPAPI credential store; Defender-only AV detection.
-9. Frontend pages for enrollment, baselines/feedback, host mapping.
+9. Verify the Phase 7 operations workflows on staging.
 
 ## Dev
 `python -m pytest` (120 tests) | `python -m alembic upgrade head` | `python -m uvicorn backend.main:app` | agent: `python -m agent enroll|once|run`

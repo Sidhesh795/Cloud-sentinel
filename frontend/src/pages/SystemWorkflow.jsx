@@ -319,7 +319,7 @@ export default function SystemWorkflow({ data, simulation }) {
             <button
               type="button"
               onClick={() => simulation.runAttack(data)}
-              disabled={!data.selected || simulation.running || simulation.status?.state === "COMPROMISED"}
+              disabled={!data.canUseSimulation || simulation.running || simulation.status?.state === "COMPROMISED"}
               className="focus-ring inline-flex items-center gap-2 rounded-md bg-red-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-red-300 disabled:cursor-not-allowed disabled:opacity-45"
             >
               <Zap className="h-4 w-4" />
@@ -328,7 +328,7 @@ export default function SystemWorkflow({ data, simulation }) {
             <button
               type="button"
               onClick={simulation.reset}
-              disabled={!data.selected || simulation.running}
+              disabled={!data.canUseSimulation || simulation.running}
               className="focus-ring inline-flex items-center gap-2 rounded-md border border-sentinel-border px-4 py-2 text-sm font-bold text-slate-200 transition hover:bg-white/5 disabled:opacity-45"
             >
               <RotateCcw className="h-4 w-4" />

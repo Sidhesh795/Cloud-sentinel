@@ -4,6 +4,7 @@ import DecisionModal from "./components/security/DecisionModal.jsx";
 import { ErrorBlock, LoadingBlock } from "./components/common/StateBlock.jsx";
 import { useSimulation } from "./hooks/useSimulation.js";
 import { Api, getToken, setToken } from "./services/api.js";
+import { Enrollment, HostMappings, BehaviorReview } from "./pages/Operations.jsx";
 import AuditLogs from "./pages/AuditLogs.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Devices from "./pages/Devices.jsx";
@@ -24,34 +25,37 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [decision, setDecision] = useState(null);
+  const operator = ["ADMIN", "SECURITY_ANALYST", "ANALYST"].includes(currentUser?.role?.trim().toUpperCase());
   const token = getToken();
 
   const loadAll = useCallback(async (preferredUserId, options = {}) => {
     if (!options.silent) setLoading(true);
     setError("");
     try {
-      const [me, users, applications, events, organization, devices, mongoHealth] = await Promise.all([
+      const [me, users, applications, events, organization, devices, mongoHealth, health] = await Promise.all([
         Api.me(),
         Api.users(),
         Api.applications(),
         Api.events(),
         Api.organization().catch(() => null),
         Api.devices().catch(() => []),
-        Api.mongoHealth().catch(() => null)
+        Api.mongoHealth().catch(() => null),
+        Api.health()
       ]);
       const targetId = preferredUserId || selectedUserId || me.id || users[0]?.id;
-      const canUseSimulation = targetId === me.id;
-      const [selected, posture, risk, telemetry, matrix, userEvents, riskHistory, simulationStatus] = await Promise.all([
+      const canUseSimulation = health.demo_mode && targetId === me.id;
+      const telemetry = await Api.telemetry(targetId);
+      const [selected, posture, risk, matrix, userEvents, riskHistory, simulationStatus] = await Promise.all([
         Api.user(targetId),
         Api.posture(targetId),
-        Api.risk(targetId),
-        Api.telemetry(targetId),
-        Api.accessMatrix(targetId),
+        telemetry.length ? Api.risk(targetId) : null,
+        telemetry.length ? Api.accessMatrix(targetId) : [],
         Api.userEvents(targetId),
         Api.riskHistory(targetId),
         canUseSimulation ? Api.simulationStatus(targetId) : Promise.resolve(null)
       ]);
       const summaries = await Promise.all(users.map(async (user) => {
+        if (user.id === targetId) return { user, risk, posture };
         try {
           const [userRisk, userPosture] = await Promise.all([Api.risk(user.id), Api.posture(user.id)]);
           return { user, risk: userRisk, posture: userPosture };
@@ -75,13 +79,14 @@ export default function App() {
         risk,
         telemetry,
         matrix,
+        canUseSimulation,
         simulationStatus,
         userSummaries: summaries.sort((a, b) => (b.risk?.risk_score || 0) - (a.risk?.risk_score || 0)),
         riskHistory: riskHistory.reverse()
       });
     } catch (err) {
       setError(err?.response?.data?.detail || "Unable to load CloudSentinel data");
-      if (err?.response?.status === 401 || err?.response?.status === 403) {
+      if (err?.response?.status === 401) {
         setToken(null);
         setCurrentUser(null);
       }
@@ -93,7 +98,6 @@ export default function App() {
   const simulation = useSimulation({ selectedUserId, refreshData: loadAll });
 
   useEffect(() => {
-    console.debug("[App] startup", { token, currentUser });
     if (!token) {
       setLoading(false);
       return;
@@ -178,9 +182,14 @@ export default function App() {
   const pageContent = useMemo(() => {
     if (!data) return null;
     const shared = { data, onSelectUser: handleSelectUser, onDecisionSelect: handleDecisionSelect };
+    if (operator && page === "Agent Enrollment") return <Enrollment users={data.users} />;
+    if (operator && page === "Host Mapping") return <HostMappings applications={data.applications} onSaved={() => loadAll(selectedUserId, { silent: true })} />;
+    if (operator && page === "Behavior Review") return <BehaviorReview users={data.users} />;
+    if (["Overview", "Security Posture", "How It Works"].includes(page) && !data.telemetry.length)
+      return <section className="panel p-5"><h2>No telemetry yet</h2><p>Risk and access decisions will appear once telemetry is available for {data.selected.username}.</p></section>;
     if (page === "Account Security") return <Security />;
     if (page === "Organization") return <Organization data={data} />;
-    if (page === "Users") return <Users {...shared} onCreateUser={handleCreateUser} onUpdateUser={handleUpdateUser} onDisableUser={handleDisableUser} />;
+    if (page === "Users") return <Users operator={operator} {...shared} onCreateUser={handleCreateUser} onUpdateUser={handleUpdateUser} onDisableUser={handleDisableUser} />;
     if (page === "Devices") return <Devices data={data} onRefreshDevice={handleDeviceHeartbeat} onSubmitHealthyPosture={handleHealthyPosture} />;
     if (page === "Security Posture") return <UserProfile {...shared} />;
     if (page === "Resources") return <Resources data={data} />;
@@ -188,12 +197,12 @@ export default function App() {
     if (page === "Audit Logs") return <AuditLogs events={data.events} />;
     if (page === "How It Works") return <SystemWorkflow {...shared} simulation={simulation} />;
     return <Dashboard {...shared} simulation={simulation} />;
-  }, [data, page, simulation]);
+  }, [data, operator, page, simulation]);
 
   if (!currentUser && !getToken()) return <Login onLogin={handleLogin} onMfaVerify={handleMfaVerify} />;
 
   return (
-    <AppShell page={page} onNavigate={setPage} applications={data?.applications || []} organization={data?.organization}>
+    <AppShell operator={operator} page={page} onNavigate={setPage} applications={data?.applications || []} organization={data?.organization}>
       {loading && <LoadingBlock />}
       {!loading && error && <ErrorBlock message={error} />}
       {!loading && !error && pageContent}

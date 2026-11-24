@@ -82,3 +82,9 @@ def test_telemetry_post_cross_user_and_cross_org_blocked(client, world):
     assert client.post("/api/telemetry", json={**body, "user_id": world["peer"]}).status_code == 404
     assert client.post("/api/telemetry", json={**body, "user_id": world["foreign"]},
                        headers=_h(client, "admin1")).status_code == 404
+
+def test_unassigned_user_sees_no_organization(client):
+    with TestingSessionLocal() as db:
+        db.query(models.User).filter_by(username="developer01").one().organization_id = None
+        db.commit()
+    assert client.get("/api/organization").status_code == 404
